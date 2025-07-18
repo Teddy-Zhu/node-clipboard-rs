@@ -110,12 +110,10 @@ impl ClipboardManager {
   /// 获取剪贴板中的图片数据（以 base64 编码返回）
   #[napi]
   pub fn get_image_base64(&self) -> Result<String> {
-    let image_data = self.context.get_image().map_err(|e| {
-      Error::new(
-        Status::GenericFailure,
-        format!("Failed to get image: {e}"),
-      )
-    })?;
+    let image_data = self
+      .context
+      .get_image()
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
 
     let png_data = image_data.to_png().map_err(|e| {
       Error::new(
@@ -141,34 +139,28 @@ impl ClipboardManager {
       )
     })?;
 
-    self.context.set_image(rust_image).map_err(|e| {
-      Error::new(
-        Status::GenericFailure,
-        format!("Failed to set image: {e}"),
-      )
-    })
+    self
+      .context
+      .set_image(rust_image)
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set image: {e}")))
   }
 
   /// 获取剪贴板中的文件列表
   #[napi]
   pub fn get_files(&self) -> Result<Vec<String>> {
-    self.context.get_files().map_err(|e| {
-      Error::new(
-        Status::GenericFailure,
-        format!("Failed to get files: {e}"),
-      )
-    })
+    self
+      .context
+      .get_files()
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get files: {e}")))
   }
 
   /// 设置剪贴板中的文件列表
   #[napi]
   pub fn set_files(&self, files: Vec<String>) -> Result<()> {
-    self.context.set_files(files).map_err(|e| {
-      Error::new(
-        Status::GenericFailure,
-        format!("Failed to set files: {e}"),
-      )
-    })
+    self
+      .context
+      .set_files(files)
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set files: {e}")))
   }
 
   /// 检查剪贴板是否包含指定格式的内容
@@ -262,12 +254,9 @@ impl ClipboardManager {
     })?;
 
     tokio::task::spawn_blocking(move || {
-      let image_data = context.get_image().map_err(|e| {
-        Error::new(
-          Status::GenericFailure,
-          format!("Failed to get image: {e}"),
-        )
-      })?;
+      let image_data = context
+        .get_image()
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
 
       let png_data = image_data.to_png().map_err(|e| {
         Error::new(
@@ -355,12 +344,9 @@ pub fn get_clipboard_image() -> Result<String> {
     )
   })?;
 
-  let image_data = context.get_image().map_err(|e| {
-    Error::new(
-      Status::GenericFailure,
-      format!("Failed to get image: {e}"),
-    )
-  })?;
+  let image_data = context
+    .get_image()
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
 
   let png_data = image_data.to_png().map_err(|e| {
     Error::new(
@@ -393,12 +379,9 @@ pub fn set_clipboard_image(base64_data: String) -> Result<()> {
     )
   })?;
 
-  context.set_image(rust_image).map_err(|e| {
-    Error::new(
-      Status::GenericFailure,
-      format!("Failed to set image: {e}"),
-    )
-  })
+  context
+    .set_image(rust_image)
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set image: {e}")))
 }
 
 /// 快速清空剪贴板
