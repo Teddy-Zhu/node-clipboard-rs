@@ -42,7 +42,7 @@ impl ClipboardManager {
     let context = ClipboardContext::new().map_err(|e| {
       Error::new(
         Status::GenericFailure,
-        format!("Failed to create clipboard context: {}", e),
+        format!("Failed to create clipboard context: {e}"),
       )
     })?;
 
@@ -55,7 +55,7 @@ impl ClipboardManager {
     self
       .context
       .get_text()
-      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get text: {}", e)))
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get text: {e}")))
   }
 
   /// 设置剪贴板中的纯文本内容
@@ -64,7 +64,7 @@ impl ClipboardManager {
     self
       .context
       .set_text(text)
-      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set text: {}", e)))
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set text: {e}")))
   }
 
   /// 获取剪贴板中的 HTML 内容
@@ -73,7 +73,7 @@ impl ClipboardManager {
     self
       .context
       .get_html()
-      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get HTML: {}", e)))
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get HTML: {e}")))
   }
 
   /// 设置剪贴板中的 HTML 内容
@@ -82,7 +82,7 @@ impl ClipboardManager {
     self
       .context
       .set_html(html)
-      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set HTML: {}", e)))
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set HTML: {e}")))
   }
 
   /// 获取剪贴板中的富文本内容
@@ -91,7 +91,7 @@ impl ClipboardManager {
     self.context.get_rich_text().map_err(|e| {
       Error::new(
         Status::GenericFailure,
-        format!("Failed to get rich text: {}", e),
+        format!("Failed to get rich text: {e}"),
       )
     })
   }
@@ -102,7 +102,7 @@ impl ClipboardManager {
     self.context.set_rich_text(text).map_err(|e| {
       Error::new(
         Status::GenericFailure,
-        format!("Failed to set rich text: {}", e),
+        format!("Failed to set rich text: {e}"),
       )
     })
   }
@@ -113,14 +113,14 @@ impl ClipboardManager {
     let image_data = self.context.get_image().map_err(|e| {
       Error::new(
         Status::GenericFailure,
-        format!("Failed to get image: {}", e),
+        format!("Failed to get image: {e}"),
       )
     })?;
 
     let png_data = image_data.to_png().map_err(|e| {
       Error::new(
         Status::GenericFailure,
-        format!("Failed to convert image to PNG: {}", e),
+        format!("Failed to convert image to PNG: {e}"),
       )
     })?;
 
@@ -132,19 +132,19 @@ impl ClipboardManager {
   pub fn set_image_base64(&self, base64_data: String) -> Result<()> {
     let image_data = BASE64_STANDARD
       .decode(base64_data)
-      .map_err(|e| Error::new(Status::InvalidArg, format!("Invalid base64 data: {}", e)))?;
+      .map_err(|e| Error::new(Status::InvalidArg, format!("Invalid base64 data: {e}")))?;
 
     let rust_image = RustImageData::from_bytes(&image_data).map_err(|e| {
       Error::new(
         Status::GenericFailure,
-        format!("Failed to create image from bytes: {}", e),
+        format!("Failed to create image from bytes: {e}"),
       )
     })?;
 
     self.context.set_image(rust_image).map_err(|e| {
       Error::new(
         Status::GenericFailure,
-        format!("Failed to set image: {}", e),
+        format!("Failed to set image: {e}"),
       )
     })
   }
@@ -155,7 +155,7 @@ impl ClipboardManager {
     self.context.get_files().map_err(|e| {
       Error::new(
         Status::GenericFailure,
-        format!("Failed to get files: {}", e),
+        format!("Failed to get files: {e}"),
       )
     })
   }
@@ -166,7 +166,7 @@ impl ClipboardManager {
     self.context.set_files(files).map_err(|e| {
       Error::new(
         Status::GenericFailure,
-        format!("Failed to set files: {}", e),
+        format!("Failed to set files: {e}"),
       )
     })
   }
@@ -183,7 +183,7 @@ impl ClipboardManager {
       _ => {
         return Err(Error::new(
           Status::InvalidArg,
-          format!("Unsupported format: {}", format),
+          format!("Unsupported format: {format}"),
         ))
       }
     };
@@ -197,7 +197,7 @@ impl ClipboardManager {
     self.context.available_formats().map_err(|e| {
       Error::new(
         Status::GenericFailure,
-        format!("Failed to get available formats: {}", e),
+        format!("Failed to get available formats: {e}"),
       )
     })
   }
@@ -208,7 +208,7 @@ impl ClipboardManager {
     self.context.clear().map_err(|e| {
       Error::new(
         Status::GenericFailure,
-        format!("Failed to clear clipboard: {}", e),
+        format!("Failed to clear clipboard: {e}"),
       )
     })
   }
@@ -219,17 +219,17 @@ impl ClipboardManager {
     let context = ClipboardContext::new().map_err(|e| {
       Error::new(
         Status::GenericFailure,
-        format!("Failed to create clipboard context: {}", e),
+        format!("Failed to create clipboard context: {e}"),
       )
     })?;
 
     tokio::task::spawn_blocking(move || {
       context
         .get_text()
-        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get text: {}", e)))
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get text: {e}")))
     })
     .await
-    .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {}", e)))?
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {e}")))?
   }
 
   /// 异步设置剪贴板文本内容
@@ -238,17 +238,17 @@ impl ClipboardManager {
     let context = ClipboardContext::new().map_err(|e| {
       Error::new(
         Status::GenericFailure,
-        format!("Failed to create clipboard context: {}", e),
+        format!("Failed to create clipboard context: {e}"),
       )
     })?;
 
     tokio::task::spawn_blocking(move || {
       context
         .set_text(text)
-        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set text: {}", e)))
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set text: {e}")))
     })
     .await
-    .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {}", e)))?
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {e}")))?
   }
 
   /// 异步获取剪贴板图片数据（以 base64 编码返回）
@@ -257,7 +257,7 @@ impl ClipboardManager {
     let context = ClipboardContext::new().map_err(|e| {
       Error::new(
         Status::GenericFailure,
-        format!("Failed to create clipboard context: {}", e),
+        format!("Failed to create clipboard context: {e}"),
       )
     })?;
 
@@ -265,21 +265,21 @@ impl ClipboardManager {
       let image_data = context.get_image().map_err(|e| {
         Error::new(
           Status::GenericFailure,
-          format!("Failed to get image: {}", e),
+          format!("Failed to get image: {e}"),
         )
       })?;
 
       let png_data = image_data.to_png().map_err(|e| {
         Error::new(
           Status::GenericFailure,
-          format!("Failed to convert image to PNG: {}", e),
+          format!("Failed to convert image to PNG: {e}"),
         )
       })?;
 
       Ok(BASE64_STANDARD.encode(png_data.get_bytes()))
     })
     .await
-    .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {}", e)))?
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {e}")))?
   }
 }
 
@@ -291,13 +291,13 @@ pub fn get_clipboard_text() -> Result<String> {
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
-      format!("Failed to create clipboard context: {}", e),
+      format!("Failed to create clipboard context: {e}"),
     )
   })?;
 
   context
     .get_text()
-    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get text: {}", e)))
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get text: {e}")))
 }
 
 /// 快速设置剪贴板文本内容
@@ -306,13 +306,13 @@ pub fn set_clipboard_text(text: String) -> Result<()> {
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
-      format!("Failed to create clipboard context: {}", e),
+      format!("Failed to create clipboard context: {e}"),
     )
   })?;
 
   context
     .set_text(text)
-    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set text: {}", e)))
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set text: {e}")))
 }
 
 /// 快速获取剪贴板 HTML 内容
@@ -321,13 +321,13 @@ pub fn get_clipboard_html() -> Result<String> {
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
-      format!("Failed to create clipboard context: {}", e),
+      format!("Failed to create clipboard context: {e}"),
     )
   })?;
 
   context
     .get_html()
-    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get HTML: {}", e)))
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get HTML: {e}")))
 }
 
 /// 快速设置剪贴板 HTML 内容
@@ -336,13 +336,13 @@ pub fn set_clipboard_html(html: String) -> Result<()> {
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
-      format!("Failed to create clipboard context: {}", e),
+      format!("Failed to create clipboard context: {e}"),
     )
   })?;
 
   context
     .set_html(html)
-    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set HTML: {}", e)))
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set HTML: {e}")))
 }
 
 /// 快速获取剪贴板图片（base64 编码）
@@ -351,21 +351,21 @@ pub fn get_clipboard_image() -> Result<String> {
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
-      format!("Failed to create clipboard context: {}", e),
+      format!("Failed to create clipboard context: {e}"),
     )
   })?;
 
   let image_data = context.get_image().map_err(|e| {
     Error::new(
       Status::GenericFailure,
-      format!("Failed to get image: {}", e),
+      format!("Failed to get image: {e}"),
     )
   })?;
 
   let png_data = image_data.to_png().map_err(|e| {
     Error::new(
       Status::GenericFailure,
-      format!("Failed to convert image to PNG: {}", e),
+      format!("Failed to convert image to PNG: {e}"),
     )
   })?;
 
@@ -378,25 +378,25 @@ pub fn set_clipboard_image(base64_data: String) -> Result<()> {
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
-      format!("Failed to create clipboard context: {}", e),
+      format!("Failed to create clipboard context: {e}"),
     )
   })?;
 
   let image_data = BASE64_STANDARD
     .decode(base64_data)
-    .map_err(|e| Error::new(Status::InvalidArg, format!("Invalid base64 data: {}", e)))?;
+    .map_err(|e| Error::new(Status::InvalidArg, format!("Invalid base64 data: {e}")))?;
 
   let rust_image = RustImageData::from_bytes(&image_data).map_err(|e| {
     Error::new(
       Status::GenericFailure,
-      format!("Failed to create image from bytes: {}", e),
+      format!("Failed to create image from bytes: {e}"),
     )
   })?;
 
   context.set_image(rust_image).map_err(|e| {
     Error::new(
       Status::GenericFailure,
-      format!("Failed to set image: {}", e),
+      format!("Failed to set image: {e}"),
     )
   })
 }
@@ -407,14 +407,14 @@ pub fn clear_clipboard() -> Result<()> {
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
-      format!("Failed to create clipboard context: {}", e),
+      format!("Failed to create clipboard context: {e}"),
     )
   })?;
 
   context.clear().map_err(|e| {
     Error::new(
       Status::GenericFailure,
-      format!("Failed to clear clipboard: {}", e),
+      format!("Failed to clear clipboard: {e}"),
     )
   })
 }
