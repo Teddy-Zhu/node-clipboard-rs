@@ -1,5 +1,5 @@
 {
-  "name": "@teddyzhu15/clipboard",
+  "name": "@teddyzhu/clipboard",
   "version": "0.0.2",
   "description": "it's a node package with napi-rs wrapper clipboard-rs",
   "main": "index.js",

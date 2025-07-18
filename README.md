@@ -1,4 +1,4 @@
-# `@teddyzhu15/clipboard`
+# `@teddyzhu/clipboard`
 
 ![https://github.com/Teddy-Zhu/node-clipboard-rs/actions](https://github.com/Teddy-Zhu/node-clipboard-rs/workflows/CI/badge.svg)
 
@@ -7,11 +7,11 @@
 # Usage
 
 ```bash
-npm install @teddyzhu15/clipboard
+npm install @teddyzhu/clipboard
 ```
 
 ```javascript
-const { ClipboardManager } = require('@teddyzhu15/clipboard')
+const { ClipboardManager } = require('@teddyzhu/clipboard')
 
 const clipboard = new ClipboardManager()
 
@@ -22,7 +22,7 @@ console.log(clipboard.getText())
 listen
 
 ```javascript
-const { ClipboardListener } = require('@teddyzhu15/clipboard')
+const { ClipboardListener } = require('@teddyzhu/clipboard')
 
 const listener = new ClipboardListener()
 

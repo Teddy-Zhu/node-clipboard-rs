@@ -1284,9 +1284,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@teddyzhu15/clipboard@workspace:.":
+"@teddyzhu/clipboard@workspace:.":
   version: 0.0.0-use.local
-  resolution: "@teddyzhu15/clipboard@workspace:."
+  resolution: "@teddyzhu/clipboard@workspace:."
   dependencies:
     "@emnapi/core": "npm:^1.4.3"
     "@emnapi/runtime": "npm:^1.4.3"
