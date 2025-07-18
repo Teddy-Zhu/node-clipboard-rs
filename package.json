@@ -99,13 +99,5 @@
     "singleQuote": true,
     "arrowParens": "always"
   },
-  "packageManager": "yarn@4.9.2",
-  "optionalDependencies": {
-    "@teddyzhu15/clipboard-win32-x64-msvc": "0.0.1",
-    "@teddyzhu15/clipboard-darwin-x64": "0.0.1",
-    "@teddyzhu15/clipboard-linux-x64-gnu": "0.0.1",
-    "@teddyzhu15/clipboard-linux-arm64-gnu": "0.0.1",
-    "@teddyzhu15/clipboard-darwin-arm64": "0.0.1",
-    "@teddyzhu15/clipboard-win32-arm64-msvc": "0.0.1"
-  }
+  "packageManager": "yarn@4.9.2"
 }
