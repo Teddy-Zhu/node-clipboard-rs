@@ -238,7 +238,6 @@ jobs:
     needs:
       - lint
       - test-macOS-windows-binding
-      - test-linux-binding
     steps:
       - uses: actions/checkout@v4
       - name: Setup node
