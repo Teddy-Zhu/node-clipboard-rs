@@ -7,8 +7,33 @@ console.log('请复制一些文本到剪贴板来测试功能')
 try {
   const listener = new ClipboardListener()
 
-  listener.watch((text) => {
-    console.log('剪贴板内容变化:', text)
+  listener.watch((data) => {
+    console.log('剪贴板数据变化:')
+    console.log('  可用格式:', data.availableFormats)
+
+    if (data.text) {
+      console.log('  文本:', data.text)
+    }
+
+    if (data.html) {
+      console.log('  HTML:', data.html.substring(0, 100) + (data.html.length > 100 ? '...' : ''))
+    }
+
+    if (data.rtf) {
+      console.log('  RTF:', data.rtf.substring(0, 100) + (data.rtf.length > 100 ? '...' : ''))
+    }
+
+    if (data.image) {
+      console.log('  图片信息:')
+      console.log('    - 尺寸:', data.image.width + 'x' + data.image.height + 'px')
+      console.log('    - 大小:', data.image.size + ' bytes')
+    }
+
+    if (data.files && data.files.length > 0) {
+      console.log('  文件:', data.files)
+    }
+
+    console.log('---')
   })
 
   console.log('监听器已启动，按 Ctrl+C 退出')

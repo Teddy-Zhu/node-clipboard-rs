@@ -11,6 +11,19 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use std::thread;
 
+/// 图片数据结构，包含图片的详细信息
+#[napi(object)]
+pub struct ImageData {
+  /// 图片宽度（像素）
+  pub width: u32,
+  /// 图片高度（像素）
+  pub height: u32,
+  /// 图片数据大小（字节）
+  pub size: u32,
+  /// 图片数据（base64 编码）
+  pub base64_data: String,
+}
+
 /// 剪贴板数据结构，包含所有可用格式的数据
 #[napi(object)]
 pub struct ClipboardData {
@@ -22,8 +35,8 @@ pub struct ClipboardData {
   pub rtf: Option<String>,
   /// HTML 内容
   pub html: Option<String>,
-  /// 图片数据（base64 编码）
-  pub image: Option<String>,
+  /// 图片数据
+  pub image: Option<ImageData>,
   /// 文件列表
   pub files: Option<Vec<String>>,
 }
@@ -123,6 +136,31 @@ impl ClipboardManager {
     })?;
 
     Ok(BASE64_STANDARD.encode(png_data.get_bytes()))
+  }
+
+  /// 获取剪贴板中的图片详细信息（包含宽度、高度、大小和 base64 数据）
+  #[napi]
+  pub fn get_image_data(&self) -> Result<ImageData> {
+    let image_data = self
+      .context
+      .get_image()
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
+
+    let (width, height) = image_data.get_size();
+    let png_data = image_data.to_png().map_err(|e| {
+      Error::new(
+        Status::GenericFailure,
+        format!("Failed to convert image to PNG: {e}"),
+      )
+    })?;
+
+    let bytes = png_data.get_bytes();
+    Ok(ImageData {
+      width,
+      height,
+      size: bytes.len() as u32,
+      base64_data: BASE64_STANDARD.encode(bytes),
+    })
   }
 
   /// 从 base64 编码的图片数据设置剪贴板图片
@@ -270,6 +308,41 @@ impl ClipboardManager {
     .await
     .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {e}")))?
   }
+
+  /// 异步获取剪贴板图片详细信息（包含宽度、高度、大小和 base64 数据）
+  #[napi]
+  pub async fn get_image_data_async(&self) -> Result<ImageData> {
+    let context = ClipboardContext::new().map_err(|e| {
+      Error::new(
+        Status::GenericFailure,
+        format!("Failed to create clipboard context: {e}"),
+      )
+    })?;
+
+    tokio::task::spawn_blocking(move || {
+      let image_data = context
+        .get_image()
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
+
+      let (width, height) = image_data.get_size();
+      let png_data = image_data.to_png().map_err(|e| {
+        Error::new(
+          Status::GenericFailure,
+          format!("Failed to convert image to PNG: {e}"),
+        )
+      })?;
+
+      let bytes = png_data.get_bytes();
+      Ok(ImageData {
+        width,
+        height,
+        size: bytes.len() as u32,
+        base64_data: BASE64_STANDARD.encode(bytes),
+      })
+    })
+    .await
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {e}")))?
+  }
 }
 
 // 便利的静态函数，用于快速操作剪贴板
@@ -358,6 +431,37 @@ pub fn get_clipboard_image() -> Result<String> {
   Ok(BASE64_STANDARD.encode(png_data.get_bytes()))
 }
 
+/// 快速获取剪贴板图片详细信息（包含宽度、高度、大小和 base64 数据）
+#[napi]
+pub fn get_clipboard_image_data() -> Result<ImageData> {
+  let context = ClipboardContext::new().map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("Failed to create clipboard context: {e}"),
+    )
+  })?;
+
+  let image_data = context
+    .get_image()
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
+
+  let (width, height) = image_data.get_size();
+  let png_data = image_data.to_png().map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("Failed to convert image to PNG: {e}"),
+    )
+  })?;
+
+  let bytes = png_data.get_bytes();
+  Ok(ImageData {
+    width,
+    height,
+    size: bytes.len() as u32,
+    base64_data: BASE64_STANDARD.encode(bytes),
+  })
+}
+
 /// 快速设置剪贴板图片（从 base64 编码）
 #[napi]
 pub fn set_clipboard_image(base64_data: String) -> Result<()> {
@@ -438,11 +542,18 @@ fn get_clipboard_data(context: &ClipboardContext) -> ClipboardData {
           html = context.get_html().ok();
         }
         "image" => {
-          image = context
-            .get_image()
-            .ok()
-            .and_then(|img_data| img_data.to_png().ok())
-            .map(|png_data| BASE64_STANDARD.encode(png_data.get_bytes()));
+          image = context.get_image().ok().and_then(|img_data| {
+            let (width, height) = img_data.get_size();
+            img_data.to_png().ok().map(|png_data| {
+              let bytes = png_data.get_bytes();
+              ImageData {
+                width,
+                height,
+                size: bytes.len() as u32,
+                base64_data: BASE64_STANDARD.encode(bytes),
+              }
+            })
+          });
         }
         "files" => {
           files = context.get_files().ok();

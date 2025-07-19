@@ -52,6 +52,8 @@ export declare class ClipboardManager {
   setRichText(text: string): void
   /** 获取剪贴板中的图片数据（以 base64 编码返回） */
   getImageBase64(): string
+  /** 获取剪贴板中的图片详细信息（包含宽度、高度、大小和 base64 数据） */
+  getImageData(): ImageData
   /** 从 base64 编码的图片数据设置剪贴板图片 */
   setImageBase64(base64Data: string): void
   /** 获取剪贴板中的文件列表 */
@@ -70,6 +72,8 @@ export declare class ClipboardManager {
   setTextAsync(text: string): Promise<void>
   /** 异步获取剪贴板图片数据（以 base64 编码返回） */
   getImageBase64Async(): Promise<string>
+  /** 异步获取剪贴板图片详细信息（包含宽度、高度、大小和 base64 数据） */
+  getImageDataAsync(): Promise<ImageData>
 }
 
 /** 快速清空剪贴板 */
@@ -85,8 +89,8 @@ export interface ClipboardData {
   rtf?: string
   /** HTML 内容 */
   html?: string
-  /** 图片数据（base64 编码） */
-  image?: string
+  /** 图片数据 */
+  image?: ImageData
   /** 文件列表 */
   files?: Array<string>
 }
@@ -97,8 +101,23 @@ export declare function getClipboardHtml(): string
 /** 快速获取剪贴板图片（base64 编码） */
 export declare function getClipboardImage(): string
 
+/** 快速获取剪贴板图片详细信息（包含宽度、高度、大小和 base64 数据） */
+export declare function getClipboardImageData(): ImageData
+
 /** 快速获取剪贴板文本内容 */
 export declare function getClipboardText(): string
+
+/** 图片数据结构，包含图片的详细信息 */
+export interface ImageData {
+  /** 图片宽度（像素） */
+  width: number
+  /** 图片高度（像素） */
+  height: number
+  /** 图片数据大小（字节） */
+  size: number
+  /** 图片数据（base64 编码） */
+  base64Data: string
+}
 
 /** 快速设置剪贴板 HTML 内容 */
 export declare function setClipboardHtml(html: string): void

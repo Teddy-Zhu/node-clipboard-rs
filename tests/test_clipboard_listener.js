@@ -26,8 +26,12 @@ listener.watch((data) => {
   }
 
   if (data.image) {
-    console.log('图片数据 (base64, 前50字符):', data.image.substring(0, 50) + '...')
-    console.log('图片数据长度:', data.image.length)
+    console.log('图片详细信息:')
+    console.log('  - 宽度:', data.image.width + 'px')
+    console.log('  - 高度:', data.image.height + 'px')
+    console.log('  - 大小:', data.image.size + ' bytes')
+    console.log('  - Base64 数据 (前50字符):', data.image.base64Data.substring(0, 50) + '...')
+    console.log('  - Base64 数据长度:', data.image.base64Data.length + ' 字符')
   }
 
   if (data.files && data.files.length > 0) {

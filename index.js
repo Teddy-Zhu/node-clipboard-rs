@@ -398,6 +398,7 @@ module.exports.ClipboardManager = nativeBinding.ClipboardManager
 module.exports.clearClipboard = nativeBinding.clearClipboard
 module.exports.getClipboardHtml = nativeBinding.getClipboardHtml
 module.exports.getClipboardImage = nativeBinding.getClipboardImage
+module.exports.getClipboardImageData = nativeBinding.getClipboardImageData
 module.exports.getClipboardText = nativeBinding.getClipboardText
 module.exports.setClipboardHtml = nativeBinding.setClipboardHtml
 module.exports.setClipboardImage = nativeBinding.setClipboardImage
