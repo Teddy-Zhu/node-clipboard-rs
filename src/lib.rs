@@ -11,10 +11,12 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use std::thread;
 
-// 添加 Wayland 相关的导入
+// 仅在 Linux 下导入 Wayland 相关依赖
+#[cfg(target_os = "linux")]
 use wayland_clipboard_listener::{ClipBoardListenMessage, WlClipboardPasteStream, WlListenType};
 
 /// 检测当前环境是否为 Wayland
+#[cfg(target_os = "linux")]
 fn is_wayland_environment() -> bool {
   // 检查 WAYLAND_DISPLAY 环境变量
   if std::env::var("WAYLAND_DISPLAY").is_ok() {
@@ -31,17 +33,31 @@ fn is_wayland_environment() -> bool {
   false
 }
 
+/// 非 Linux 平台的 Wayland 环境检测（总是返回 false）
+#[cfg(not(target_os = "linux"))]
+fn is_wayland_environment() -> bool {
+  false
+}
+
 /// 检测 Wayland 剪贴板监听是否可用
 ///
 /// 返回 true 表示当前环境支持 Wayland 剪贴板监听
 #[napi]
 pub fn is_wayland_clipboard_available() -> bool {
-  if !is_wayland_environment() {
-    return false;
+  #[cfg(target_os = "linux")]
+  {
+    if !is_wayland_environment() {
+      return false;
+    }
+
+    // 尝试初始化 Wayland 剪贴板流来测试是否可用
+    WlClipboardPasteStream::init(WlListenType::ListenOnCopy).is_ok()
   }
 
-  // 尝试初始化 Wayland 剪贴板流来测试是否可用
-  WlClipboardPasteStream::init(WlListenType::ListenOnCopy).is_ok()
+  #[cfg(not(target_os = "linux"))]
+  {
+    false
+  }
 }
 
 /// 图片数据结构，包含图片的详细信息
@@ -730,6 +746,7 @@ pub fn clear_clipboard() -> Result<()> {
 }
 
 /// 将 Wayland 剪贴板消息转换为我们的 ClipboardData 格式
+#[cfg(target_os = "linux")]
 fn wayland_context_to_clipboard_data(message: ClipBoardListenMessage) -> ClipboardData {
   let mut available_formats = Vec::new();
   let mut text = None;
@@ -852,7 +869,8 @@ fn get_clipboard_data(context: &ClipboardContext) -> ClipboardData {
 enum ListenerType {
   /// 使用 clipboard_rs 监听器（X11/通用）
   ClipboardRs(clipboard_rs::WatcherShutdown),
-  /// 使用 Wayland 专用监听器
+  /// 使用 Wayland 专用监听器（仅 Linux）
+  #[cfg(target_os = "linux")]
   Wayland(std::sync::mpsc::Sender<()>),
 }
 
@@ -917,6 +935,7 @@ impl ClipboardListener {
   }
 
   /// 使用 Wayland 专用监听器监听剪贴板变化
+  #[cfg(target_os = "linux")]
   fn watch_wayland(
     &mut self,
     tsfn: ThreadsafeFunction<ClipboardData, (), ClipboardData, napi::Status, false>,
@@ -959,6 +978,18 @@ impl ClipboardListener {
     // 保存停止通道
     self.listener_type = Some(ListenerType::Wayland(stop_tx));
     Ok(())
+  }
+
+  /// 非 Linux 平台的 Wayland 监听器（空实现）
+  #[cfg(not(target_os = "linux"))]
+  fn watch_wayland(
+    &mut self,
+    _tsfn: ThreadsafeFunction<ClipboardData, (), ClipboardData, napi::Status, false>,
+  ) -> Result<()> {
+    Err(Error::new(
+      Status::GenericFailure,
+      "Wayland clipboard listener is not supported on this platform".to_string(),
+    ))
   }
 
   /// 使用通用监听器监听剪贴板变化
@@ -1029,6 +1060,7 @@ impl ClipboardListener {
         ListenerType::ClipboardRs(shutdown) => {
           shutdown.stop();
         }
+        #[cfg(target_os = "linux")]
         ListenerType::Wayland(stop_tx) => {
           let _ = stop_tx.send(());
         }
