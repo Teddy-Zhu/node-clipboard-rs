@@ -11,6 +11,39 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use std::thread;
 
+// 添加 Wayland 相关的导入
+use wayland_clipboard_listener::{ClipBoardListenMessage, WlClipboardPasteStream, WlListenType};
+
+/// 检测当前环境是否为 Wayland
+fn is_wayland_environment() -> bool {
+  // 检查 WAYLAND_DISPLAY 环境变量
+  if std::env::var("WAYLAND_DISPLAY").is_ok() {
+    return true;
+  }
+
+  // 检查 XDG_SESSION_TYPE 环境变量
+  if let Ok(session_type) = std::env::var("XDG_SESSION_TYPE") {
+    if session_type == "wayland" {
+      return true;
+    }
+  }
+
+  false
+}
+
+/// 检测 Wayland 剪贴板监听是否可用
+///
+/// 返回 true 表示当前环境支持 Wayland 剪贴板监听
+#[napi]
+pub fn is_wayland_clipboard_available() -> bool {
+  if !is_wayland_environment() {
+    return false;
+  }
+
+  // 尝试初始化 Wayland 剪贴板流来测试是否可用
+  WlClipboardPasteStream::init(WlListenType::ListenOnCopy).is_ok()
+}
+
 /// 图片数据结构，包含图片的详细信息
 #[napi(object)]
 pub struct ImageData {
@@ -199,6 +232,70 @@ impl ClipboardManager {
       .context
       .set_files(files)
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set files: {e}")))
+  }
+
+  /// 设置剪贴板中的自定义格式数据
+  #[napi]
+  pub fn set_buffer(&self, format: String, buffer: Vec<u8>) -> Result<()> {
+    self
+      .context
+      .set_buffer(&format, buffer)
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set buffer: {e}")))
+  }
+
+  /// 获取剪贴板中的自定义格式数据
+  #[napi]
+  pub fn get_buffer(&self, format: String) -> Result<Vec<u8>> {
+    self
+      .context
+      .get_buffer(&format)
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get buffer: {e}")))
+  }
+
+  /// 设置剪贴板中的复合内容（可同时设置多种格式）
+  #[napi]
+  pub fn set_contents(&self, contents: ClipboardData) -> Result<()> {
+    use clipboard_rs::ClipboardContent;
+
+    let mut clipboard_contents = Vec::new();
+
+    if let Some(text) = contents.text {
+      clipboard_contents.push(ClipboardContent::Text(text));
+    }
+
+    if let Some(html) = contents.html {
+      clipboard_contents.push(ClipboardContent::Html(html));
+    }
+
+    if let Some(rtf) = contents.rtf {
+      clipboard_contents.push(ClipboardContent::Rtf(rtf));
+    }
+
+    if let Some(image_data) = contents.image {
+      let image_bytes = BASE64_STANDARD
+        .decode(image_data.base64_data)
+        .map_err(|e| Error::new(Status::InvalidArg, format!("Invalid base64 data: {e}")))?;
+
+      let rust_image = RustImageData::from_bytes(&image_bytes).map_err(|e| {
+        Error::new(
+          Status::GenericFailure,
+          format!("Failed to create image from bytes: {e}"),
+        )
+      })?;
+
+      clipboard_contents.push(ClipboardContent::Image(rust_image));
+    }
+
+    if let Some(files) = contents.files {
+      clipboard_contents.push(ClipboardContent::Files(files));
+    }
+
+    self.context.set(clipboard_contents).map_err(|e| {
+      Error::new(
+        Status::GenericFailure,
+        format!("Failed to set contents: {e}"),
+      )
+    })
   }
 
   /// 检查剪贴板是否包含指定格式的内容
@@ -488,6 +585,132 @@ pub fn set_clipboard_image(base64_data: String) -> Result<()> {
     .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set image: {e}")))
 }
 
+/// 快速设置剪贴板自定义格式数据
+#[napi]
+pub fn set_clipboard_buffer(format: String, buffer: Vec<u8>) -> Result<()> {
+  let context = ClipboardContext::new().map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("Failed to create clipboard context: {e}"),
+    )
+  })?;
+
+  context
+    .set_buffer(&format, buffer)
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set buffer: {e}")))
+}
+
+/// 快速获取剪贴板自定义格式数据
+#[napi]
+pub fn get_clipboard_buffer(format: String) -> Result<Vec<u8>> {
+  let context = ClipboardContext::new().map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("Failed to create clipboard context: {e}"),
+    )
+  })?;
+
+  context
+    .get_buffer(&format)
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get buffer: {e}")))
+}
+
+/// 快速设置剪贴板文件列表
+#[napi]
+pub fn set_clipboard_files(files: Vec<String>) -> Result<()> {
+  let context = ClipboardContext::new().map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("Failed to create clipboard context: {e}"),
+    )
+  })?;
+
+  context
+    .set_files(files)
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set files: {e}")))
+}
+
+/// 快速获取剪贴板文件列表
+#[napi]
+pub fn get_clipboard_files() -> Result<Vec<String>> {
+  let context = ClipboardContext::new().map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("Failed to create clipboard context: {e}"),
+    )
+  })?;
+
+  context
+    .get_files()
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get files: {e}")))
+}
+
+/// 快速设置剪贴板复合内容（可同时设置多种格式）
+#[napi]
+pub fn set_clipboard_contents(contents: ClipboardData) -> Result<()> {
+  let context = ClipboardContext::new().map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("Failed to create clipboard context: {e}"),
+    )
+  })?;
+
+  use clipboard_rs::ClipboardContent;
+
+  let mut clipboard_contents = Vec::new();
+
+  if let Some(text) = contents.text {
+    clipboard_contents.push(ClipboardContent::Text(text));
+  }
+
+  if let Some(html) = contents.html {
+    clipboard_contents.push(ClipboardContent::Html(html));
+  }
+
+  if let Some(rtf) = contents.rtf {
+    clipboard_contents.push(ClipboardContent::Rtf(rtf));
+  }
+
+  if let Some(image_data) = contents.image {
+    let image_bytes = BASE64_STANDARD
+      .decode(image_data.base64_data)
+      .map_err(|e| Error::new(Status::InvalidArg, format!("Invalid base64 data: {e}")))?;
+
+    let rust_image = RustImageData::from_bytes(&image_bytes).map_err(|e| {
+      Error::new(
+        Status::GenericFailure,
+        format!("Failed to create image from bytes: {e}"),
+      )
+    })?;
+
+    clipboard_contents.push(ClipboardContent::Image(rust_image));
+  }
+
+  if let Some(files) = contents.files {
+    clipboard_contents.push(ClipboardContent::Files(files));
+  }
+
+  context.set(clipboard_contents).map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("Failed to set contents: {e}"),
+    )
+  })
+}
+
+/// 快速获取完整的剪贴板数据
+#[napi]
+pub fn get_full_clipboard_data() -> Result<ClipboardData> {
+  let context = ClipboardContext::new().map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("Failed to create clipboard context: {e}"),
+    )
+  })?;
+
+  Ok(get_clipboard_data(&context))
+}
+
 /// 快速清空剪贴板
 #[napi]
 pub fn clear_clipboard() -> Result<()> {
@@ -504,6 +727,58 @@ pub fn clear_clipboard() -> Result<()> {
       format!("Failed to clear clipboard: {e}"),
     )
   })
+}
+
+/// 将 Wayland 剪贴板消息转换为我们的 ClipboardData 格式
+fn wayland_context_to_clipboard_data(message: ClipBoardListenMessage) -> ClipboardData {
+  let mut available_formats = Vec::new();
+  let mut text = None;
+  let mut html = None;
+  let mut image = None;
+
+  // 根据 MIME 类型处理数据
+  match message.context.mime_type.as_str() {
+    "text/plain" | "text/plain;charset=utf-8" | "UTF8_STRING" | "STRING" => {
+      available_formats.push("text".to_string());
+      if let Ok(text_content) = String::from_utf8(message.context.context) {
+        text = Some(text_content);
+      }
+    }
+    "text/html" => {
+      available_formats.push("html".to_string());
+      if let Ok(html_content) = String::from_utf8(message.context.context) {
+        html = Some(html_content);
+      }
+    }
+    "image/png" | "image/jpeg" | "image/gif" | "image/bmp" => {
+      available_formats.push("image".to_string());
+      // 将图片数据转换为 base64
+      let base64_data = BASE64_STANDARD.encode(&message.context.context);
+      // 由于 Wayland 监听器不能直接获取图片尺寸，我们设置为 0
+      image = Some(ImageData {
+        width: 0,
+        height: 0,
+        size: message.context.context.len() as u32,
+        base64_data,
+      });
+    }
+    _ => {
+      // 对于其他类型，尝试作为文本处理
+      if let Ok(text_content) = String::from_utf8(message.context.context) {
+        available_formats.push("text".to_string());
+        text = Some(text_content);
+      }
+    }
+  }
+
+  ClipboardData {
+    available_formats,
+    text,
+    rtf: None, // Wayland 监听器暂不支持 RTF
+    html,
+    image,
+    files: None, // Wayland 监听器暂不支持文件列表
+  }
 }
 
 /// 获取完整的剪贴板数据
@@ -573,7 +848,16 @@ fn get_clipboard_data(context: &ClipboardContext) -> ClipboardData {
   }
 }
 
+/// 监听器类型枚举
+enum ListenerType {
+  /// 使用 clipboard_rs 监听器（X11/通用）
+  ClipboardRs(clipboard_rs::WatcherShutdown),
+  /// 使用 Wayland 专用监听器
+  Wayland(std::sync::mpsc::Sender<()>),
+}
+
 /// 剪贴板监听器实例，用于监听剪贴板变化并支持停止
+/// 支持自动检测环境：在 Wayland 环境下使用 Wayland 专用监听器，否则使用通用监听器
 /// 使用方法：
 /// ```javascript
 /// const { ClipboardListener } = require('./index.node');
@@ -593,23 +877,30 @@ fn get_clipboard_data(context: &ClipboardContext) -> ClipboardData {
 /// ```
 #[napi]
 pub struct ClipboardListener {
-  shutdown: Option<clipboard_rs::WatcherShutdown>,
+  listener_type: Option<ListenerType>,
+  is_wayland: bool,
 }
 
 #[napi]
 impl ClipboardListener {
   /// 创建新的剪贴板监听器实例
+  /// 自动检测当前环境类型（Wayland 或其他）
   #[napi(constructor)]
   pub fn new() -> Result<Self> {
-    Ok(ClipboardListener { shutdown: None })
+    let is_wayland = is_wayland_environment();
+    Ok(ClipboardListener {
+      listener_type: None,
+      is_wayland,
+    })
   }
 
   /// 开始监听剪贴板变化
   /// callback: 当剪贴板变化时调用的回调函数，参数为包含所有格式数据的复杂对象
+  /// 自动根据当前环境选择合适的监听方式（Wayland 或通用）
   #[napi]
   pub fn watch(&mut self, callback: Function<ClipboardData, ()>) -> Result<()> {
     // 如果已经在监听，先停止
-    if self.shutdown.is_some() {
+    if self.listener_type.is_some() {
       self.stop()?;
     }
 
@@ -618,6 +909,63 @@ impl ClipboardListener {
       .build_threadsafe_function()
       .build_callback(|ctx| Ok(ctx.value))?;
 
+    if self.is_wayland {
+      self.watch_wayland(tsfn)
+    } else {
+      self.watch_generic(tsfn)
+    }
+  }
+
+  /// 使用 Wayland 专用监听器监听剪贴板变化
+  fn watch_wayland(
+    &mut self,
+    tsfn: ThreadsafeFunction<ClipboardData, (), ClipboardData, napi::Status, false>,
+  ) -> Result<()> {
+    // 创建停止信号通道
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+
+    // 在新线程中启动 Wayland 剪贴板监听
+    thread::spawn(move || {
+      // 创建 Wayland 剪贴板流
+      let mut stream = match WlClipboardPasteStream::init(WlListenType::ListenOnCopy) {
+        Ok(stream) => stream,
+        Err(_) => return,
+      };
+
+      // 设置 MIME 类型优先级
+      stream.set_priority(vec![
+        "text/plain;charset=utf-8".into(),
+        "text/plain".into(),
+        "text/html".into(),
+        "image/png".into(),
+        "image/jpeg".into(),
+      ]);
+
+      // 监听剪贴板变化
+      for context_result in stream.paste_stream() {
+        // 检查停止信号
+        if stop_rx.try_recv().is_ok() {
+          break;
+        }
+
+        if let Ok(Some(message)) = context_result {
+          // 将 Wayland 剪贴板数据转换为我们的格式
+          let clipboard_data = wayland_context_to_clipboard_data(message);
+          let _ = tsfn.call(clipboard_data, ThreadsafeFunctionCallMode::NonBlocking);
+        }
+      }
+    });
+
+    // 保存停止通道
+    self.listener_type = Some(ListenerType::Wayland(stop_tx));
+    Ok(())
+  }
+
+  /// 使用通用监听器监听剪贴板变化
+  fn watch_generic(
+    &mut self,
+    tsfn: ThreadsafeFunction<ClipboardData, (), ClipboardData, napi::Status, false>,
+  ) -> Result<()> {
     // 创建通道用于传递 shutdown
     let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<clipboard_rs::WatcherShutdown>();
 
@@ -667,7 +1015,7 @@ impl ClipboardListener {
 
     // 接收 shutdown 并保存
     if let Ok(shutdown) = shutdown_rx.recv() {
-      self.shutdown = Some(shutdown);
+      self.listener_type = Some(ListenerType::ClipboardRs(shutdown));
     }
 
     Ok(())
@@ -676,8 +1024,15 @@ impl ClipboardListener {
   /// 停止监听剪贴板变化
   #[napi]
   pub fn stop(&mut self) -> Result<()> {
-    if let Some(shutdown) = self.shutdown.take() {
-      shutdown.stop();
+    if let Some(listener_type) = self.listener_type.take() {
+      match listener_type {
+        ListenerType::ClipboardRs(shutdown) => {
+          shutdown.stop();
+        }
+        ListenerType::Wayland(stop_tx) => {
+          let _ = stop_tx.send(());
+        }
+      }
     }
     Ok(())
   }
@@ -685,6 +1040,16 @@ impl ClipboardListener {
   /// 检查是否正在监听
   #[napi]
   pub fn is_watching(&self) -> bool {
-    self.shutdown.is_some()
+    self.listener_type.is_some()
+  }
+
+  /// 获取当前使用的监听器类型
+  #[napi]
+  pub fn get_listener_type(&self) -> String {
+    if self.is_wayland {
+      "wayland".to_string()
+    } else {
+      "generic".to_string()
+    }
   }
 }

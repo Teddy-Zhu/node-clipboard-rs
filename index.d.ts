@@ -2,6 +2,7 @@
 /* eslint-disable */
 /**
  * 剪贴板监听器实例，用于监听剪贴板变化并支持停止
+ * 支持自动检测环境：在 Wayland 环境下使用 Wayland 专用监听器，否则使用通用监听器
  * 使用方法：
  * ```javascript
  * const { ClipboardListener } = require('./index.node');
@@ -21,17 +22,23 @@
  * ```
  */
 export declare class ClipboardListener {
-  /** 创建新的剪贴板监听器实例 */
+  /**
+   * 创建新的剪贴板监听器实例
+   * 自动检测当前环境类型（Wayland 或其他）
+   */
   constructor()
   /**
    * 开始监听剪贴板变化
    * callback: 当剪贴板变化时调用的回调函数，参数为包含所有格式数据的复杂对象
+   * 自动根据当前环境选择合适的监听方式（Wayland 或通用）
    */
   watch(callback: (arg: ClipboardData) => void): void
   /** 停止监听剪贴板变化 */
   stop(): void
   /** 检查是否正在监听 */
   isWatching(): boolean
+  /** 获取当前使用的监听器类型 */
+  getListenerType(): string
 }
 
 /** 剪贴板管理器，提供跨平台的剪贴板操作功能 */
@@ -60,6 +67,12 @@ export declare class ClipboardManager {
   getFiles(): Array<string>
   /** 设置剪贴板中的文件列表 */
   setFiles(files: Array<string>): void
+  /** 设置剪贴板中的自定义格式数据 */
+  setBuffer(format: string, buffer: Array<number>): void
+  /** 获取剪贴板中的自定义格式数据 */
+  getBuffer(format: string): Array<number>
+  /** 设置剪贴板中的复合内容（可同时设置多种格式） */
+  setContents(contents: ClipboardData): void
   /** 检查剪贴板是否包含指定格式的内容 */
   hasFormat(format: string): boolean
   /** 获取剪贴板中所有可用的格式 */
@@ -95,6 +108,12 @@ export interface ClipboardData {
   files?: Array<string>
 }
 
+/** 快速获取剪贴板自定义格式数据 */
+export declare function getClipboardBuffer(format: string): Array<number>
+
+/** 快速获取剪贴板文件列表 */
+export declare function getClipboardFiles(): Array<string>
+
 /** 快速获取剪贴板 HTML 内容 */
 export declare function getClipboardHtml(): string
 
@@ -107,6 +126,9 @@ export declare function getClipboardImageData(): ImageData
 /** 快速获取剪贴板文本内容 */
 export declare function getClipboardText(): string
 
+/** 快速获取完整的剪贴板数据 */
+export declare function getFullClipboardData(): ClipboardData
+
 /** 图片数据结构，包含图片的详细信息 */
 export interface ImageData {
   /** 图片宽度（像素） */
@@ -118,6 +140,22 @@ export interface ImageData {
   /** 图片数据（base64 编码） */
   base64Data: string
 }
+
+/**
+ * 检测 Wayland 剪贴板监听是否可用
+ *
+ * 返回 true 表示当前环境支持 Wayland 剪贴板监听
+ */
+export declare function isWaylandClipboardAvailable(): boolean
+
+/** 快速设置剪贴板自定义格式数据 */
+export declare function setClipboardBuffer(format: string, buffer: Array<number>): void
+
+/** 快速设置剪贴板复合内容（可同时设置多种格式） */
+export declare function setClipboardContents(contents: ClipboardData): void
+
+/** 快速设置剪贴板文件列表 */
+export declare function setClipboardFiles(files: Array<string>): void
 
 /** 快速设置剪贴板 HTML 内容 */
 export declare function setClipboardHtml(html: string): void

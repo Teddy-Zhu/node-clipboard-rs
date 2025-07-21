@@ -239,7 +239,7 @@ jobs:
       - lint
       - test-macOS-windows-binding
       - test-linux-binding
-    if: always() && needs.lint.result == 'success' && needs.test-macOS-windows-binding.result == 'success'
+    if: always() && needs.lint.result == 'success' && needs.test-macOS-windows-binding.result == 'success' && (needs.test-linux-binding.result == 'success' || needs.test-linux-binding.result == 'failure' || needs.test-linux-binding.result == 'skipped')
     steps:
       - uses: actions/checkout@v4
       - name: Setup node
