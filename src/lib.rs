@@ -69,8 +69,8 @@ pub struct ImageData {
   pub height: u32,
   /// 图片数据大小（字节）
   pub size: u32,
-  /// 图片数据（base64 编码）
-  pub base64_data: String,
+  /// 图片原始数据（Buffer）
+  pub data: Buffer,
 }
 
 /// 剪贴板数据结构，包含所有可用格式的数据
@@ -187,7 +187,7 @@ impl ClipboardManager {
     Ok(BASE64_STANDARD.encode(png_data.get_bytes()))
   }
 
-  /// 获取剪贴板中的图片详细信息（包含宽度、高度、大小和 base64 数据）
+  /// 获取剪贴板中的图片详细信息（包含宽度、高度、大小和原始数据）
   #[napi]
   pub fn get_image_data(&self) -> Result<ImageData> {
     let image_data = self
@@ -208,7 +208,7 @@ impl ClipboardManager {
       width,
       height,
       size: bytes.len() as u32,
-      base64_data: BASE64_STANDARD.encode(bytes),
+      data: Buffer::from(bytes.to_vec()),
     })
   }
 
@@ -232,6 +232,40 @@ impl ClipboardManager {
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set image: {e}")))
   }
 
+  /// 从原始字节数据设置剪贴板图片
+  #[napi]
+  pub fn set_image_raw(&self, image_data: Buffer) -> Result<()> {
+    let rust_image = RustImageData::from_bytes(&image_data).map_err(|e| {
+      Error::new(
+        Status::GenericFailure,
+        format!("Failed to create image from bytes: {e}"),
+      )
+    })?;
+
+    self
+      .context
+      .set_image(rust_image)
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set image: {e}")))
+  }
+
+  /// 获取剪贴板中的图片原始数据（Buffer）
+  #[napi]
+  pub fn get_image_raw(&self) -> Result<Buffer> {
+    let image_data = self
+      .context
+      .get_image()
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
+
+    let png_data = image_data.to_png().map_err(|e| {
+      Error::new(
+        Status::GenericFailure,
+        format!("Failed to convert image to PNG: {e}"),
+      )
+    })?;
+
+    Ok(Buffer::from(png_data.get_bytes().to_vec()))
+  }
+
   /// 获取剪贴板中的文件列表
   #[napi]
   pub fn get_files(&self) -> Result<Vec<String>> {
@@ -252,20 +286,21 @@ impl ClipboardManager {
 
   /// 设置剪贴板中的自定义格式数据
   #[napi]
-  pub fn set_buffer(&self, format: String, buffer: Vec<u8>) -> Result<()> {
+  pub fn set_buffer(&self, format: String, buffer: Buffer) -> Result<()> {
     self
       .context
-      .set_buffer(&format, buffer)
+      .set_buffer(&format, buffer.to_vec())
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set buffer: {e}")))
   }
 
   /// 获取剪贴板中的自定义格式数据
   #[napi]
-  pub fn get_buffer(&self, format: String) -> Result<Vec<u8>> {
-    self
+  pub fn get_buffer(&self, format: String) -> Result<Buffer> {
+    let data = self
       .context
       .get_buffer(&format)
-      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get buffer: {e}")))
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get buffer: {e}")))?;
+    Ok(Buffer::from(data))
   }
 
   /// 设置剪贴板中的复合内容（可同时设置多种格式）
@@ -288,11 +323,7 @@ impl ClipboardManager {
     }
 
     if let Some(image_data) = contents.image {
-      let image_bytes = BASE64_STANDARD
-        .decode(image_data.base64_data)
-        .map_err(|e| Error::new(Status::InvalidArg, format!("Invalid base64 data: {e}")))?;
-
-      let rust_image = RustImageData::from_bytes(&image_bytes).map_err(|e| {
+      let rust_image = RustImageData::from_bytes(image_data.data.as_ref()).map_err(|e| {
         Error::new(
           Status::GenericFailure,
           format!("Failed to create image from bytes: {e}"),
@@ -422,7 +453,7 @@ impl ClipboardManager {
     .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {e}")))?
   }
 
-  /// 异步获取剪贴板图片详细信息（包含宽度、高度、大小和 base64 数据）
+  /// 异步获取剪贴板图片详细信息（包含宽度、高度、大小和原始数据）
   #[napi]
   pub async fn get_image_data_async(&self) -> Result<ImageData> {
     let context = ClipboardContext::new().map_err(|e| {
@@ -450,7 +481,7 @@ impl ClipboardManager {
         width,
         height,
         size: bytes.len() as u32,
-        base64_data: BASE64_STANDARD.encode(bytes),
+        data: Buffer::from(bytes.to_vec()),
       })
     })
     .await
@@ -544,7 +575,7 @@ pub fn get_clipboard_image() -> Result<String> {
   Ok(BASE64_STANDARD.encode(png_data.get_bytes()))
 }
 
-/// 快速获取剪贴板图片详细信息（包含宽度、高度、大小和 base64 数据）
+/// 快速获取剪贴板图片详细信息（包含宽度、高度、大小和原始数据）
 #[napi]
 pub fn get_clipboard_image_data() -> Result<ImageData> {
   let context = ClipboardContext::new().map_err(|e| {
@@ -571,7 +602,7 @@ pub fn get_clipboard_image_data() -> Result<ImageData> {
     width,
     height,
     size: bytes.len() as u32,
-    base64_data: BASE64_STANDARD.encode(bytes),
+    data: Buffer::from(bytes.to_vec()),
   })
 }
 
@@ -601,9 +632,55 @@ pub fn set_clipboard_image(base64_data: String) -> Result<()> {
     .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set image: {e}")))
 }
 
+/// 快速设置剪贴板图片（从原始字节数据）
+#[napi]
+pub fn set_clipboard_image_raw(image_data: Buffer) -> Result<()> {
+  let context = ClipboardContext::new().map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("Failed to create clipboard context: {e}"),
+    )
+  })?;
+
+  let rust_image = RustImageData::from_bytes(&image_data).map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("Failed to create image from bytes: {e}"),
+    )
+  })?;
+
+  context
+    .set_image(rust_image)
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set image: {e}")))
+}
+
+/// 快速获取剪贴板图片原始数据（Buffer）
+#[napi]
+pub fn get_clipboard_image_raw() -> Result<Buffer> {
+  let context = ClipboardContext::new().map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("Failed to create clipboard context: {e}"),
+    )
+  })?;
+
+  let image_data = context
+    .get_image()
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
+
+  let png_data = image_data.to_png().map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("Failed to convert image to PNG: {e}"),
+    )
+  })?;
+
+  Ok(Buffer::from(png_data.get_bytes().to_vec()))
+}
+
 /// 快速设置剪贴板自定义格式数据
 #[napi]
-pub fn set_clipboard_buffer(format: String, buffer: Vec<u8>) -> Result<()> {
+pub fn set_clipboard_buffer(format: String, buffer: Buffer) -> Result<()> {
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
@@ -612,13 +689,13 @@ pub fn set_clipboard_buffer(format: String, buffer: Vec<u8>) -> Result<()> {
   })?;
 
   context
-    .set_buffer(&format, buffer)
+    .set_buffer(&format, buffer.to_vec())
     .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set buffer: {e}")))
 }
 
 /// 快速获取剪贴板自定义格式数据
 #[napi]
-pub fn get_clipboard_buffer(format: String) -> Result<Vec<u8>> {
+pub fn get_clipboard_buffer(format: String) -> Result<Buffer> {
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
@@ -626,9 +703,10 @@ pub fn get_clipboard_buffer(format: String) -> Result<Vec<u8>> {
     )
   })?;
 
-  context
+  let data = context
     .get_buffer(&format)
-    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get buffer: {e}")))
+    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get buffer: {e}")))?;
+  Ok(Buffer::from(data))
 }
 
 /// 快速设置剪贴板文件列表
@@ -688,11 +766,7 @@ pub fn set_clipboard_contents(contents: ClipboardData) -> Result<()> {
   }
 
   if let Some(image_data) = contents.image {
-    let image_bytes = BASE64_STANDARD
-      .decode(image_data.base64_data)
-      .map_err(|e| Error::new(Status::InvalidArg, format!("Invalid base64 data: {e}")))?;
-
-    let rust_image = RustImageData::from_bytes(&image_bytes).map_err(|e| {
+    let rust_image = RustImageData::from_bytes(image_data.data.as_ref()).map_err(|e| {
       Error::new(
         Status::GenericFailure,
         format!("Failed to create image from bytes: {e}"),
@@ -769,14 +843,12 @@ fn wayland_context_to_clipboard_data(message: ClipBoardListenMessage) -> Clipboa
     }
     "image/png" | "image/jpeg" | "image/gif" | "image/bmp" => {
       available_formats.push("image".to_string());
-      // 将图片数据转换为 base64
-      let base64_data = BASE64_STANDARD.encode(&message.context.context);
       // 由于 Wayland 监听器不能直接获取图片尺寸，我们设置为 0
       image = Some(ImageData {
         width: 0,
         height: 0,
         size: message.context.context.len() as u32,
-        base64_data,
+        data: Buffer::from(message.context.context),
       });
     }
     _ => {
@@ -842,7 +914,7 @@ fn get_clipboard_data(context: &ClipboardContext) -> ClipboardData {
                 width,
                 height,
                 size: bytes.len() as u32,
-                base64_data: BASE64_STANDARD.encode(bytes),
+                data: Buffer::from(bytes.to_vec()),
               }
             })
           });

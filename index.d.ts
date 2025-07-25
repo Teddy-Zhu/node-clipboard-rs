@@ -59,18 +59,22 @@ export declare class ClipboardManager {
   setRichText(text: string): void
   /** 获取剪贴板中的图片数据（以 base64 编码返回） */
   getImageBase64(): string
-  /** 获取剪贴板中的图片详细信息（包含宽度、高度、大小和 base64 数据） */
+  /** 获取剪贴板中的图片详细信息（包含宽度、高度、大小和原始数据） */
   getImageData(): ImageData
   /** 从 base64 编码的图片数据设置剪贴板图片 */
   setImageBase64(base64Data: string): void
+  /** 从原始字节数据设置剪贴板图片 */
+  setImageRaw(imageData: Buffer): void
+  /** 获取剪贴板中的图片原始数据（Buffer） */
+  getImageRaw(): Buffer
   /** 获取剪贴板中的文件列表 */
   getFiles(): Array<string>
   /** 设置剪贴板中的文件列表 */
   setFiles(files: Array<string>): void
   /** 设置剪贴板中的自定义格式数据 */
-  setBuffer(format: string, buffer: Array<number>): void
+  setBuffer(format: string, buffer: Buffer): void
   /** 获取剪贴板中的自定义格式数据 */
-  getBuffer(format: string): Array<number>
+  getBuffer(format: string): Buffer
   /** 设置剪贴板中的复合内容（可同时设置多种格式） */
   setContents(contents: ClipboardData): void
   /** 检查剪贴板是否包含指定格式的内容 */
@@ -85,7 +89,7 @@ export declare class ClipboardManager {
   setTextAsync(text: string): Promise<void>
   /** 异步获取剪贴板图片数据（以 base64 编码返回） */
   getImageBase64Async(): Promise<string>
-  /** 异步获取剪贴板图片详细信息（包含宽度、高度、大小和 base64 数据） */
+  /** 异步获取剪贴板图片详细信息（包含宽度、高度、大小和原始数据） */
   getImageDataAsync(): Promise<ImageData>
 }
 
@@ -109,7 +113,7 @@ export interface ClipboardData {
 }
 
 /** 快速获取剪贴板自定义格式数据 */
-export declare function getClipboardBuffer(format: string): Array<number>
+export declare function getClipboardBuffer(format: string): Buffer
 
 /** 快速获取剪贴板文件列表 */
 export declare function getClipboardFiles(): Array<string>
@@ -120,8 +124,11 @@ export declare function getClipboardHtml(): string
 /** 快速获取剪贴板图片（base64 编码） */
 export declare function getClipboardImage(): string
 
-/** 快速获取剪贴板图片详细信息（包含宽度、高度、大小和 base64 数据） */
+/** 快速获取剪贴板图片详细信息（包含宽度、高度、大小和原始数据） */
 export declare function getClipboardImageData(): ImageData
+
+/** 快速获取剪贴板图片原始数据（Buffer） */
+export declare function getClipboardImageRaw(): Buffer
 
 /** 快速获取剪贴板文本内容 */
 export declare function getClipboardText(): string
@@ -137,8 +144,8 @@ export interface ImageData {
   height: number
   /** 图片数据大小（字节） */
   size: number
-  /** 图片数据（base64 编码） */
-  base64Data: string
+  /** 图片原始数据（Buffer） */
+  data: Buffer
 }
 
 /**
@@ -149,7 +156,7 @@ export interface ImageData {
 export declare function isWaylandClipboardAvailable(): boolean
 
 /** 快速设置剪贴板自定义格式数据 */
-export declare function setClipboardBuffer(format: string, buffer: Array<number>): void
+export declare function setClipboardBuffer(format: string, buffer: Buffer): void
 
 /** 快速设置剪贴板复合内容（可同时设置多种格式） */
 export declare function setClipboardContents(contents: ClipboardData): void
@@ -162,6 +169,9 @@ export declare function setClipboardHtml(html: string): void
 
 /** 快速设置剪贴板图片（从 base64 编码） */
 export declare function setClipboardImage(base64Data: string): void
+
+/** 快速设置剪贴板图片（从原始字节数据） */
+export declare function setClipboardImageRaw(imageData: Buffer): void
 
 /** 快速设置剪贴板文本内容 */
 export declare function setClipboardText(text: string): void
