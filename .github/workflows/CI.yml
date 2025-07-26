@@ -24,9 +24,29 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  check-version:
+    name: Check if version release
+    runs-on: ubuntu-latest
+    outputs:
+      is-version-release: ${{ steps.check.outputs.is-version-release }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check commit message
+        id: check
+        run: |
+          if git log -1 --pretty=%B | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$"; then
+            echo "is-version-release=true" >> $GITHUB_OUTPUT
+            echo "✅ Version release detected"
+          else
+            echo "is-version-release=false" >> $GITHUB_OUTPUT
+            echo "❌ Not a version release, skipping build"
+          fi
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    needs: check-version
+    if: needs.check-version.outputs.is-version-release == 'true'
     steps:
       - uses: actions/checkout@v4
       - name: Setup node
@@ -71,6 +91,8 @@ jobs:
             build: yarn build --target aarch64-pc-windows-msvc
     name: stable - ${{ matrix.settings.target }} - node@22
     runs-on: ${{ matrix.settings.host }}
+    needs: check-version
+    if: needs.check-version.outputs.is-version-release == 'true'
     steps:
       - uses: actions/checkout@v4
       - name: Setup node
@@ -125,7 +147,9 @@ jobs:
   test-macOS-windows-binding:
     name: Test bindings on ${{ matrix.settings.target }} - node@${{ matrix.node }}
     needs:
+      - check-version
       - build
+    if: needs.check-version.outputs.is-version-release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -169,7 +193,9 @@ jobs:
   test-linux-binding:
     name: Test ${{ matrix.target }} - node@${{ matrix.node }}
     needs:
+      - check-version
       - build
+    if: needs.check-version.outputs.is-version-release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -236,10 +262,11 @@ jobs:
     name: Publish
     runs-on: ubuntu-latest
     needs:
+      - check-version
       - lint
       - test-macOS-windows-binding
       - test-linux-binding
-    if: always() && needs.lint.result == 'success' && needs.test-macOS-windows-binding.result == 'success' && (needs.test-linux-binding.result == 'success' || needs.test-linux-binding.result == 'failure' || needs.test-linux-binding.result == 'skipped')
+    if: always() && needs.check-version.outputs.is-version-release == 'true' && needs.lint.result == 'success' && needs.test-macOS-windows-binding.result == 'success' && (needs.test-linux-binding.result == 'success' || needs.test-linux-binding.result == 'failure' || needs.test-linux-binding.result == 'skipped')
     steps:
       - uses: actions/checkout@v4
       - name: Setup node
@@ -263,17 +290,9 @@ jobs:
       - name: Publish
         run: |
           npm config set provenance true
-          if git log -1 --pretty=%B | grep "^[0-9]\+\.[0-9]\+\.[0-9]\+$";
-          then
-            echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
-            npm publish --access public
-          elif git log -1 --pretty=%B | grep "^[0-9]\+\.[0-9]\+\.[0-9]\+";
-          then
-            echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
-            npm publish --tag next --access public
-          else
-            echo "Not a release, skipping publish"
-          fi
+          echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
+          echo "📦 Publishing version release..."
+          npm publish --access public
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

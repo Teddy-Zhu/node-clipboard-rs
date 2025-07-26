@@ -1,162 +1,55 @@
-# @teddyzhu/clipboard
+# `@teddyzhu/clipboard`
 
-![CI](https://github.com/Teddy-Zhu/node-clipboard-rs/workflows/CI/badge.svg)
-[![npm version](https://badge.fury.io/js/@teddyzhu%2Fclipboard.svg)](https://www.npmjs.com/package/@teddyzhu/clipboard)
+![https://github.com/Teddy-Zhu/node-clipboard-rs/actions](https://github.com/Teddy-Zhu/node-clipboard-rs/workflows/CI/badge.svg)
 
-基于 clipboard-rs 和 napi-rs 的高性能 Node.js 剪贴板操作库，提供跨平台的剪贴板读写和监听功能。
+> 基于 napi-rs 包装 clipboard-rs 的 Node.js 剪贴板库，提供跨平台剪贴板操作功能
 
-## ✨ 特性
+## 特性
 
-- 🚀 **高性能**: 基于 Rust 原生实现，性能优越
-- 🔄 **实时监听**: 支持剪贴板变化监听，自动检测内容更新
-- 🌐 **跨平台**: 支持 Windows、macOS 和 Linux（包括 Wayland(实验)）
-- 📝 **多格式**: 支持文本、HTML、RTF、图片、文件等多种数据格式
-- ⚡ **异步支持**: 提供同步和异步 API
-- 🖼️ **图片处理**: 完整的图片剪贴板支持，包含尺寸和格式信息
-- 🔧 **自定义格式**: 支持自定义数据格式的读写
+- 🚀 跨平台支持（Windows、macOS、Linux）
+- 📝 支持多种数据格式：文本、HTML、RTF、图片、文件列表
+- 🖼️ 完整的图片处理支持（PNG、JPEG、GIF、BMP）
+- 👂 剪贴板实时监听功能
+- 🐧 Linux Wayland 环境原生支持
+- ⚡ 同步和异步 API
+- 🎯 TypeScript 类型定义
 
-## 📦 安装
+## 安装
 
 ```bash
 npm install @teddyzhu/clipboard
 ```
 
-## 🚀 快速开始
+## 基本使用
 
-### 基本使用
+### 剪贴板管理器
 
 ```javascript
 const { ClipboardManager } = require('@teddyzhu/clipboard')
 
 const clipboard = new ClipboardManager()
 
-// 设置和获取文本
+// 文本操作
 clipboard.setText('Hello World!')
 console.log(clipboard.getText()) // "Hello World!"
 
-// 设置和获取 HTML
+// HTML 操作
 clipboard.setHtml('<h1>Hello HTML</h1>')
 console.log(clipboard.getHtml())
 
-// 检查格式是否可用
-if (clipboard.hasFormat('text')) {
-  console.log('剪贴板包含文本内容')
-}
+// 富文本（RTF）操作
+clipboard.setRichText('Hello RTF')
+console.log(clipboard.getRichText())
+
+// 检查格式支持
+console.log(clipboard.hasFormat('text')) // true
+console.log(clipboard.getAvailableFormats()) // ['text', 'html', ...]
+
+// 清空剪贴板
+clipboard.clear()
 ```
 
-### 图片操作
-
-```javascript
-const { ClipboardManager } = require('@teddyzhu/clipboard')
-
-const clipboard = new ClipboardManager()
-
-// 检查是否有图片
-if (clipboard.hasFormat('image')) {
-  // 获取图片详细信息
-  const imageData = clipboard.getImageData()
-  console.log('图片信息:', {
-    width: imageData.width,
-    height: imageData.height,
-    size: imageData.size,
-    format: 'PNG (base64)'
-  })
-  
-  // 保存图片到文件
-  const fs = require('fs')
-  const imageBuffer = Buffer.from(imageData.base64Data, 'base64')
-  fs.writeFileSync('clipboard-image.png', imageBuffer)
-}
-
-// 从文件设置图片到剪贴板
-const fs = require('fs')
-const imageBuffer = fs.readFileSync('my-image.png')
-const base64Data = imageBuffer.toString('base64')
-clipboard.setImageBase64(base64Data)
-```
-
-### 剪贴板监听
-
-```javascript
-const { ClipboardListener } = require('@teddyzhu/clipboard')
-
-const listener = new ClipboardListener()
-
-listener.watch((data) => {
-  console.log('剪贴板内容变化:')
-  console.log('可用格式:', data.available_formats)
-
-  // 处理文本内容
-  if (data.text) {
-    console.log('📝 文本:', data.text)
-  }
-
-  // 处理 HTML 内容
-  if (data.html) {
-    console.log('🌐 HTML:', data.html)
-  }
-
-  // 处理富文本内容
-  if (data.rtf) {
-    console.log('📄 RTF:', data.rtf)
-  }
-
-  // 处理图片内容
-  if (data.image) {
-    console.log('🖼️  图片信息:')
-    console.log(`   尺寸: ${data.image.width}x${data.image.height}px`)
-    console.log(`   大小: ${data.image.size} bytes`)
-    console.log(`   数据长度: ${data.image.base64_data.length} 字符`)
-  }
-
-  // 处理文件列表
-  if (data.files) {
-    console.log('📁 文件列表:', data.files)
-  }
-})
-
-// 检查监听状态
-console.log('监听器类型:', listener.getListenerType()) // "wayland" 或 "generic"
-console.log('正在监听:', listener.isWatching())
-
-// 停止监听
-// listener.stop()
-```
-
-### 异步操作
-
-```javascript
-const { ClipboardManager } = require('@teddyzhu/clipboard')
-
-const clipboard = new ClipboardManager()
-
-async function asyncClipboardDemo() {
-  try {
-    // 异步设置文本
-    await clipboard.setTextAsync('异步设置的文本')
-    
-    // 异步获取文本
-    const text = await clipboard.getTextAsync()
-    console.log('异步获取的文本:', text)
-    
-    // 异步获取图片
-    if (clipboard.hasFormat('image')) {
-      const imageData = await clipboard.getImageDataAsync()
-      console.log('异步获取的图片信息:', {
-        width: imageData.width,
-        height: imageData.height,
-        size: imageData.size
-      })
-    }
-  } catch (error) {
-    console.error('异步操作失败:', error)
-  }
-}
-
-asyncClipboardDemo()
-```
-
-### 便利函数
+### 快速操作函数
 
 ```javascript
 const {
@@ -164,311 +57,329 @@ const {
   setClipboardText,
   getClipboardHtml,
   setClipboardHtml,
-  getClipboardImageData,
-  setClipboardImage,
-  getClipboardFiles,
-  setClipboardFiles,
-  getFullClipboardData,
   clearClipboard,
-  isWaylandClipboardAvailable
+  getFullClipboardData,
 } = require('@teddyzhu/clipboard')
 
 // 快速文本操作
-setClipboardText('快速设置文本')
+setClipboardText('Hello World!')
 console.log(getClipboardText())
 
-// 快速获取完整数据
-const fullData = getFullClipboardData()
-console.log('完整剪贴板数据:', fullData)
+// 快速 HTML 操作
+setClipboardHtml('<p>Hello HTML</p>')
+console.log(getClipboardHtml())
 
-// 检查 Wayland 支持
-if (isWaylandClipboardAvailable()) {
-  console.log('当前环境支持 Wayland 剪贴板')
-}
+// 获取完整剪贴板数据
+const data = getFullClipboardData()
+console.log('可用格式:', data.availableFormats)
+console.log('文本内容:', data.text)
+console.log('HTML内容:', data.html)
 
 // 清空剪贴板
 clearClipboard()
 ```
 
-### 复合内容操作
+## 图片操作
+
+### 基本图片操作
 
 ```javascript
-const { ClipboardManager } = require('@teddyzhu/clipboard')
+const { ClipboardManager, getClipboardImageData } = require('@teddyzhu/clipboard')
+const fs = require('fs')
 
 const clipboard = new ClipboardManager()
 
-// 同时设置多种格式的内容
-const complexData = {
-  text: '这是纯文本内容',
-  html: '<h1>这是 HTML 内容</h1><p>支持丰富的格式</p>',
-  rtf: '{\\rtf1\\ansi 这是 RTF 格式}',
-  files: ['/path/to/file1.txt', '/path/to/file2.jpg']
+// 检查是否有图片
+if (clipboard.hasFormat('image')) {
+  // 获取图片详细信息
+  const imageData = clipboard.getImageData()
+  console.log('图片宽度:', imageData.width + 'px')
+  console.log('图片高度:', imageData.height + 'px')
+  console.log('图片大小:', imageData.size + ' bytes')
+
+  // 保存图片到文件
+  fs.writeFileSync('clipboard_image.png', imageData.data)
+
+  // 获取 base64 编码
+  const base64 = clipboard.getImageBase64()
+  console.log('Base64 长度:', base64.length)
 }
 
-clipboard.setContents(complexData)
+// 从文件设置图片
+const imageBuffer = fs.readFileSync('image.png')
+clipboard.setImageRaw(imageBuffer)
 
-// 或使用便利函数
-const { setClipboardContents } = require('@teddyzhu/clipboard')
-setClipboardContents(complexData)
+// 从 base64 设置图片
+const base64Data = fs.readFileSync('image.png', 'base64')
+clipboard.setImageBase64(base64Data)
+
+// 快速图片操作
+const quickImageData = getClipboardImageData()
 ```
 
-## 📖 API 文档
+### 异步图片操作
 
-### ClipboardManager 类
+```javascript
+const clipboard = new ClipboardManager()
 
-用于管理剪贴板操作的主要类。
+// 异步获取图片
+try {
+  const imageData = await clipboard.getImageDataAsync()
+  console.log('异步获取图片:', imageData.width + 'x' + imageData.height)
 
-#### 构造函数
+  const base64 = await clipboard.getImageBase64Async()
+  console.log('异步获取 Base64 长度:', base64.length)
+} catch (error) {
+  console.error('获取图片失败:', error.message)
+}
 
-```typescript
-new ClipboardManager(): ClipboardManager
+// 异步文本操作
+await clipboard.setTextAsync('Hello Async!')
+const text = await clipboard.getTextAsync()
+console.log('异步文本:', text)
 ```
 
-#### 文本操作
+## 文件操作
 
-```typescript
-getText(): string                    // 获取纯文本
-setText(text: string): void          // 设置纯文本
-getTextAsync(): Promise<string>      // 异步获取纯文本
-setTextAsync(text: string): Promise<void> // 异步设置纯文本
+```javascript
+const { ClipboardManager, getClipboardFiles, setClipboardFiles } = require('@teddyzhu/clipboard')
+
+const clipboard = new ClipboardManager()
+
+// 设置文件列表
+const files = ['/path/to/file1.txt', '/path/to/file2.pdf']
+clipboard.setFiles(files)
+
+// 获取文件列表
+if (clipboard.hasFormat('files')) {
+  const clipboardFiles = clipboard.getFiles()
+  console.log('剪贴板中的文件:', clipboardFiles)
+}
+
+// 快速文件操作
+setClipboardFiles(['/path/to/document.pdf'])
+const quickFiles = getClipboardFiles()
+console.log('快速获取文件:', quickFiles)
 ```
 
-#### HTML 操作
+## 自定义格式数据
 
-```typescript
-getHtml(): string                    // 获取 HTML 内容
-setHtml(html: string): void          // 设置 HTML 内容
-```
+```javascript
+const clipboard = new ClipboardManager()
 
-#### 富文本操作
+// 设置自定义格式数据
+const customData = Buffer.from('custom binary data')
+clipboard.setBuffer('application/custom', customData)
 
-```typescript
-getRichText(): string                // 获取 RTF 富文本
-setRichText(rtf: string): void       // 设置 RTF 富文本
-```
-
-#### 图片操作
-
-```typescript
-getImageBase64(): string             // 获取图片 base64 数据
-getImageData(): ImageData            // 获取图片详细信息
-getImageDataAsync(): Promise<ImageData> // 异步获取图片信息
-setImageBase64(base64: string): void // 设置图片（base64）
-```
-
-#### 文件操作
-
-```typescript
-getFiles(): string[]                 // 获取文件路径列表
-setFiles(files: string[]): void      // 设置文件路径列表
-```
-
-#### 自定义格式操作
-
-```typescript
-getBuffer(format: string): Uint8Array    // 获取自定义格式数据
-setBuffer(format: string, data: Uint8Array): void // 设置自定义格式数据
-```
-
-#### 复合操作
-
-```typescript
-setContents(data: ClipboardData): void   // 设置复合内容
-```
-
-#### 工具方法
-
-```typescript
-hasFormat(format: string): boolean       // 检查格式是否可用
-getAvailableFormats(): string[]          // 获取所有可用格式
-clear(): void                           // 清空剪贴板
-```
-
-### ClipboardListener 类
-
-用于监听剪贴板变化的类。
-
-#### 构造函数
-
-```typescript
-new ClipboardListener(): ClipboardListener
-```
-
-#### 监听控制
-
-```typescript
-watch(callback: (data: ClipboardData) => void): void  // 开始监听
-stop(): void                                          // 停止监听
-isWatching(): boolean                                 // 检查监听状态
-getListenerType(): string                            // 获取监听器类型
-```
-
-### 数据类型
-
-#### ClipboardData
-
-```typescript
-interface ClipboardData {
-  available_formats: string[]     // 可用格式列表
-  text?: string                   // 纯文本内容
-  rtf?: string                    // RTF 富文本内容
-  html?: string                   // HTML 内容
-  image?: ImageData               // 图片数据
-  files?: string[]                // 文件路径列表
+// 获取自定义格式数据
+try {
+  const data = clipboard.getBuffer('application/custom')
+  console.log('自定义数据:', data.toString())
+} catch (error) {
+  console.error('自定义格式不存在')
 }
 ```
 
-#### ImageData
+## 复合内容操作
 
-```typescript
-interface ImageData {
-  width: number           // 图片宽度（像素）
-  height: number          // 图片高度（像素）
-  size: number            // 数据大小（字节）
-  base64_data: string     // base64 编码的图片数据
+```javascript
+const { ClipboardManager, setClipboardContents } = require('@teddyzhu/clipboard')
+
+const clipboard = new ClipboardManager()
+
+// 同时设置多种格式
+const contents = {
+  text: 'Hello World!',
+  html: '<h1>Hello HTML</h1>',
+  rtf: 'Hello RTF',
+  // 可选：图片数据
+  // image: { width: 100, height: 100, size: 1000, data: imageBuffer },
+  // 可选：文件列表
+  // files: ['/path/to/file.txt']
 }
+
+clipboard.setContents(contents)
+
+// 快速设置复合内容
+setClipboardContents({
+  text: 'Multi-format content',
+  html: '<p>Multi-format <strong>content</strong></p>',
+})
 ```
 
-### 便利函数
+## 剪贴板监听
 
-```typescript
-// 文本操作
-getClipboardText(): string
-setClipboardText(text: string): void
+### 基本监听
 
-// HTML 操作
-getClipboardHtml(): string
-setClipboardHtml(html: string): void
+```javascript
+const { ClipboardListener } = require('@teddyzhu/clipboard')
 
-// 图片操作
-getClipboardImage(): string                    // 获取 base64
-getClipboardImageData(): ImageData             // 获取详细信息
-setClipboardImage(base64: string): void
+const listener = new ClipboardListener()
 
-// 文件操作
-getClipboardFiles(): string[]
-setClipboardFiles(files: string[]): void
+listener.watch((data) => {
+  console.log('剪贴板数据变化:', data)
+  console.log('可用格式:', data.availableFormats)
 
-// 自定义格式操作
-getClipboardBuffer(format: string): Uint8Array
-setClipboardBuffer(format: string, data: Uint8Array): void
+  if (data.text) {
+    console.log('文本:', data.text)
+  }
 
-// 复合操作
-getFullClipboardData(): ClipboardData
-setClipboardContents(data: ClipboardData): void
+  if (data.html) {
+    console.log('HTML:', data.html)
+  }
 
-// 工具函数
-clearClipboard(): void
-isWaylandClipboardAvailable(): boolean
+  if (data.rtf) {
+    console.log('RTF:', data.rtf)
+  }
+
+  if (data.image) {
+    console.log('图片信息:')
+    console.log('  尺寸:', data.image.width + 'x' + data.image.height + 'px')
+    console.log('  大小:', data.image.size + ' bytes')
+    // 注意：图片数据在 data.image.data (Buffer) 中，不是 base64Data
+    console.log('  数据类型:', Buffer.isBuffer(data.image.data) ? 'Buffer' : typeof data.image.data)
+  }
+
+  if (data.files) {
+    console.log('文件:', data.files)
+  }
+})
+
+// 检查监听状态
+console.log('是否正在监听:', listener.isWatching())
+console.log('监听器类型:', listener.getListenerType()) // 'wayland' 或 'generic'
+
+// 停止监听
+setTimeout(() => {
+  listener.stop()
+  console.log('已停止监听')
+}, 10000)
 ```
 
-## 🌟 特殊功能
+## Wayland 支持
 
-### Wayland 支持
-
-本库自动检测运行环境，在 Wayland 桌面环境下会使用专门优化的监听器：
+本库对 Linux Wayland 环境提供原生支持：
 
 ```javascript
 const { isWaylandClipboardAvailable, ClipboardListener } = require('@teddyzhu/clipboard')
 
+// 检查 Wayland 剪贴板是否可用
 if (isWaylandClipboardAvailable()) {
-  console.log('使用 Wayland 优化的剪贴板监听器')
+  console.log('Wayland 剪贴板监听可用')
+
+  const listener = new ClipboardListener()
+  console.log('当前监听器类型:', listener.getListenerType()) // 在 Wayland 下会显示 'wayland'
+
+  // Wayland 监听器会自动处理不同的 MIME 类型
+  listener.watch((data) => {
+    console.log('Wayland 剪贴板变化:', data)
+  })
 } else {
   console.log('使用通用剪贴板监听器')
 }
-
-const listener = new ClipboardListener()
-console.log('监听器类型:', listener.getListenerType())
 ```
 
-### 环境检测
+## API 参考
 
-```javascript
-// 检测当前环境是否支持 Wayland 剪贴板
-if (isWaylandClipboardAvailable()) {
-  // Wayland 环境下的特殊处理
+### ClipboardManager 类
+
+| 方法                         | 描述                                   |
+| ---------------------------- | -------------------------------------- |
+| `getText()`                  | 获取纯文本内容                         |
+| `setText(text)`              | 设置纯文本内容                         |
+| `getHtml()`                  | 获取 HTML 内容                         |
+| `setHtml(html)`              | 设置 HTML 内容                         |
+| `getRichText()`              | 获取 RTF 富文本内容                    |
+| `setRichText(text)`          | 设置 RTF 富文本内容                    |
+| `getImageBase64()`           | 获取图片的 base64 编码                 |
+| `getImageData()`             | 获取图片详细信息（包含尺寸和原始数据） |
+| `setImageBase64(base64Data)` | 从 base64 设置图片                     |
+| `setImageRaw(buffer)`        | 从 Buffer 设置图片                     |
+| `getImageRaw()`              | 获取图片原始数据（Buffer）             |
+| `getFiles()`                 | 获取文件列表                           |
+| `setFiles(files)`            | 设置文件列表                           |
+| `setBuffer(format, buffer)`  | 设置自定义格式数据                     |
+| `getBuffer(format)`          | 获取自定义格式数据                     |
+| `setContents(contents)`      | 设置复合内容                           |
+| `hasFormat(format)`          | 检查是否包含指定格式                   |
+| `getAvailableFormats()`      | 获取所有可用格式                       |
+| `clear()`                    | 清空剪贴板                             |
+
+### 异步方法
+
+| 方法                    | 描述                 |
+| ----------------------- | -------------------- |
+| `getTextAsync()`        | 异步获取文本内容     |
+| `setTextAsync(text)`    | 异步设置文本内容     |
+| `getImageBase64Async()` | 异步获取图片 base64  |
+| `getImageDataAsync()`   | 异步获取图片详细信息 |
+
+### ClipboardListener 类
+
+| 方法                | 描述                                     |
+| ------------------- | ---------------------------------------- |
+| `watch(callback)`   | 开始监听剪贴板变化                       |
+| `stop()`            | 停止监听                                 |
+| `isWatching()`      | 检查是否正在监听                         |
+| `getListenerType()` | 获取监听器类型（'wayland' 或 'generic'） |
+
+### 快速操作函数
+
+| 函数                                 | 描述                        |
+| ------------------------------------ | --------------------------- |
+| `getClipboardText()`                 | 快速获取文本                |
+| `setClipboardText(text)`             | 快速设置文本                |
+| `getClipboardHtml()`                 | 快速获取 HTML               |
+| `setClipboardHtml(html)`             | 快速设置 HTML               |
+| `getClipboardImage()`                | 快速获取图片（base64）      |
+| `getClipboardImageData()`            | 快速获取图片详细信息        |
+| `setClipboardImage(base64Data)`      | 快速设置图片（base64）      |
+| `setClipboardImageRaw(buffer)`       | 快速设置图片（Buffer）      |
+| `getClipboardImageRaw()`             | 快速获取图片原始数据        |
+| `getClipboardFiles()`                | 快速获取文件列表            |
+| `setClipboardFiles(files)`           | 快速设置文件列表            |
+| `getClipboardBuffer(format)`         | 快速获取自定义格式数据      |
+| `setClipboardBuffer(format, buffer)` | 快速设置自定义格式数据      |
+| `setClipboardContents(contents)`     | 快速设置复合内容            |
+| `getFullClipboardData()`             | 快速获取完整剪贴板数据      |
+| `clearClipboard()`                   | 快速清空剪贴板              |
+| `isWaylandClipboardAvailable()`      | 检查 Wayland 剪贴板是否可用 |
+
+## 数据结构
+
+### ClipboardData
+
+```typescript
+interface ClipboardData {
+  availableFormats: string[] // 可用的格式列表
+  text?: string // 纯文本内容
+  rtf?: string // RTF 富文本内容
+  html?: string // HTML 内容
+  image?: ImageData // 图片数据
+  files?: string[] // 文件列表
 }
 ```
 
-## 🛠️ 开发环境要求
+### ImageData
 
-- **Node.js**: >= 12.0.0
-- **操作系统**: Windows 7+, macOS 10.9+, Linux
-- **Linux 额外要求**:
-  - X11: `libxcb`, `libxcb-shape`, `libxcb-xfixes`
-  - Wayland: `wl-clipboard` 工具
-
-### Linux 依赖安装
-
-**Ubuntu/Debian:**
-```bash
-sudo apt install libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev wl-clipboard
-```
-
-**CentOS/RHEL:**
-```bash
-sudo yum install libxcb-devel wl-clipboard
-```
-
-**Arch Linux:**
-```bash
-sudo pacman -S libxcb wl-clipboard
-```
-
-## 🔧 故障排除
-
-### 常见问题
-
-1. **Linux 环境下无法访问剪贴板**
-   - 确保安装了必要的系统依赖
-   - 检查桌面环境是否支持剪贴板操作
-
-2. **Wayland 环境下监听不工作**
-   - 确保安装了 `wl-clipboard` 工具
-   - 检查环境变量 `WAYLAND_DISPLAY` 是否正确设置
-
-3. **图片格式不支持**
-   - 目前支持 PNG、JPEG、GIF、BMP 格式
-   - 图片数据统一转换为 PNG 格式输出
-
-4. **权限问题**
-   - 某些 Linux 发行版可能需要额外的权限配置
-   - 确保应用程序有访问剪贴板的权限
-
-### 调试模式
-
-```javascript
-const { ClipboardManager } = require('@teddyzhu/clipboard')
-
-const clipboard = new ClipboardManager()
-
-try {
-  // 检查可用格式
-  const formats = clipboard.getAvailableFormats()
-  console.log('可用格式:', formats)
-  
-  // 逐一测试各种格式
-  if (clipboard.hasFormat('text')) {
-    console.log('文本内容:', clipboard.getText())
-  }
-  
-  if (clipboard.hasFormat('image')) {
-    const imageData = clipboard.getImageData()
-    console.log('图片信息:', imageData.width, 'x', imageData.height)
-  }
-} catch (error) {
-  console.error('剪贴板操作失败:', error.message)
+```typescript
+interface ImageData {
+  width: number // 图片宽度（像素）
+  height: number // 图片高度（像素）
+  size: number // 图片数据大小（字节）
+  data: Buffer // 图片原始数据（Buffer）
 }
 ```
 
-## 📄 许可证
+## 注意事项
 
-MIT License - 详见 [LICENSE](LICENSE) 文件。
+1. **图片格式**：所有图片都会转换为 PNG 格式存储
+2. **文件路径**：文件路径需要是绝对路径
+3. **自定义格式**：自定义格式的 MIME 类型需要遵循标准
+4. **Wayland 支持**：在 Wayland 环境下会自动使用专用监听器以获得更好的性能
+5. **异步操作**：对于可能耗时的操作，推荐使用异步版本
+6. **错误处理**：所有方法都可能抛出异常，请适当处理错误
 
-## 🤝 贡献
+## 许可证
 
-欢迎提交 Issue 和 Pull Request！
-
-## 📞 支持
-
-如遇问题，请在 [GitHub Issues](https://github.com/Teddy-Zhu/node-clipboard-rs/issues) 中报告。
+MIT
