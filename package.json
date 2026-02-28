@@ -1,6 +1,6 @@
 {
   "name": "@teddyzhu/clipboard",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "it's a node package with napi-rs wrapper clipboard-rs",
   "main": "index.js",
   "repository": "git@github.com:Teddy-Zhu/node-clipboard-rs.git",
@@ -15,7 +15,8 @@
   ],
   "files": [
     "index.d.ts",
-    "index.js"
+    "index.js",
+    "*.node"
   ],
   "napi": {
     "binaryName": "clipboard",

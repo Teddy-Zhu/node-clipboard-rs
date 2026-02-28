@@ -266,7 +266,7 @@ jobs:
       - lint
       - test-macOS-windows-binding
       - test-linux-binding
-    if: always() && needs.check-version.outputs.is-version-release == 'true' && needs.lint.result == 'success' && needs.test-macOS-windows-binding.result == 'success' && (needs.test-linux-binding.result == 'success' || needs.test-linux-binding.result == 'failure' || needs.test-linux-binding.result == 'skipped')
+    if: always() && needs.check-version.outputs.is-version-release == 'true' && needs.lint.result == 'success' && needs.test-macOS-windows-binding.result == 'success' && needs.test-linux-binding.result == 'success' 
     steps:
       - uses: actions/checkout@v4
       - name: Setup node
