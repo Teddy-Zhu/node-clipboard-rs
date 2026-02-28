@@ -13,7 +13,6 @@
     "node-addon",
     "node-addon-api"
   ],
-  
   "files": [
     "index.d.ts",
     "index.js",
