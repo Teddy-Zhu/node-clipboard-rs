@@ -9,7 +9,7 @@ v0.0.6
 ## 特性
 
 - 🚀 跨平台支持（Windows、macOS、Linux）
-- 📝 支持多种数据格式：文本、HTML、RTF、图片、文件列表
+- 📝 支持多种数据格式：文本、HTML、 RTF、图片、文件列表
 - 🖼️ 完整的图片处理支持（PNG、JPEG、GIF、BMP）
 - 👂 剪贴板实时监听功能
 - 🐧 Linux Wayland 环境原生支持
