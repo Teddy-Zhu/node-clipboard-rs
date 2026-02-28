@@ -21,6 +21,12 @@ permissions:
       - docs/**
   pull_request: null
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish release to npm'
+        required: false
+        default: false
+        type: boolean
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -35,7 +41,10 @@ jobs:
       - name: Check commit message
         id: check
         run: |
-          if git log -1 --pretty=%B | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$"; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.publish }}" == "true" ]]; then
+            echo "is-version-release=true" >> $GITHUB_OUTPUT
+            echo "✅ Manual publish trigger detected"
+          elif git log -1 --pretty=%B | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$"; then
             echo "is-version-release=true" >> $GITHUB_OUTPUT
             echo "✅ Version release detected"
           else
