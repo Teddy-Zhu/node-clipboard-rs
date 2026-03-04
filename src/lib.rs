@@ -99,7 +99,55 @@ pub struct ClipboardData {
 /// 剪贴板管理器，提供跨平台的剪贴板操作功能
 #[napi]
 pub struct ClipboardManager {
-  context: ClipboardContext,
+  context: Option<ClipboardContext>,
+}
+
+fn get_context_or_error(context: Option<&ClipboardContext>) -> Result<&ClipboardContext> {
+  context.ok_or_else(|| {
+    Error::new(
+      Status::GenericFailure,
+      "Clipboard context is unavailable in current environment".to_string(),
+    )
+  })
+}
+
+fn image_to_png_bytes(image_data: &RustImageData, err_prefix: &str) -> Result<Vec<u8>> {
+  let png_data = image_data.to_png().map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("{err_prefix}: failed to convert image to PNG: {e}"),
+    )
+  })?;
+  Ok(png_data.get_bytes().to_vec())
+}
+
+fn image_bytes_to_png_bytes(image_data: &[u8], err_prefix: &str) -> Result<Vec<u8>> {
+  let rust_image = RustImageData::from_bytes(image_data).map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("{err_prefix}: failed to create image from bytes: {e}"),
+    )
+  })?;
+  image_to_png_bytes(&rust_image, err_prefix)
+}
+
+fn image_bytes_to_image_data(image_data: &[u8], err_prefix: &str) -> Result<ImageData> {
+  let rust_image = RustImageData::from_bytes(image_data).map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("{err_prefix}: failed to create image from bytes: {e}"),
+    )
+  })?;
+
+  let (width, height) = rust_image.get_size();
+  let png_bytes = image_to_png_bytes(&rust_image, err_prefix)?;
+
+  Ok(ImageData {
+    width,
+    height,
+    size: png_bytes.len() as u32,
+    data: Buffer::from(png_bytes),
+  })
 }
 
 #[napi]
@@ -107,6 +155,10 @@ impl ClipboardManager {
   /// 创建新的剪贴板管理器实例
   #[napi(constructor)]
   pub fn new() -> Result<Self> {
+    if is_wayland_environment() {
+      return Ok(ClipboardManager { context: None });
+    }
+
     let context = ClipboardContext::new().map_err(|e| {
       Error::new(
         Status::GenericFailure,
@@ -114,14 +166,22 @@ impl ClipboardManager {
       )
     })?;
 
-    Ok(ClipboardManager { context })
+    Ok(ClipboardManager {
+      context: Some(context),
+    })
   }
 
   /// 获取剪贴板中的纯文本内容
   #[napi]
   pub fn get_text(&self) -> Result<String> {
-    self
-      .context
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return wayland::get_text()
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get text: {e}")));
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    context
       .get_text()
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get text: {e}")))
   }
@@ -129,8 +189,14 @@ impl ClipboardManager {
   /// 设置剪贴板中的纯文本内容
   #[napi]
   pub fn set_text(&self, text: String) -> Result<()> {
-    self
-      .context
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return wayland::set_text(text)
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set text: {e}")));
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    context
       .set_text(text)
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set text: {e}")))
   }
@@ -138,8 +204,14 @@ impl ClipboardManager {
   /// 获取剪贴板中的 HTML 内容
   #[napi]
   pub fn get_html(&self) -> Result<String> {
-    self
-      .context
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return wayland::get_html()
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get HTML: {e}")));
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    context
       .get_html()
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get HTML: {e}")))
   }
@@ -147,8 +219,14 @@ impl ClipboardManager {
   /// 设置剪贴板中的 HTML 内容
   #[napi]
   pub fn set_html(&self, html: String) -> Result<()> {
-    self
-      .context
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return wayland::set_html(html)
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set HTML: {e}")));
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    context
       .set_html(html)
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set HTML: {e}")))
   }
@@ -156,7 +234,18 @@ impl ClipboardManager {
   /// 获取剪贴板中的富文本内容
   #[napi]
   pub fn get_rich_text(&self) -> Result<String> {
-    self.context.get_rich_text().map_err(|e| {
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return wayland::get_rich_text().map_err(|e| {
+        Error::new(
+          Status::GenericFailure,
+          format!("Failed to get rich text: {e}"),
+        )
+      });
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    context.get_rich_text().map_err(|e| {
       Error::new(
         Status::GenericFailure,
         format!("Failed to get rich text: {e}"),
@@ -167,7 +256,18 @@ impl ClipboardManager {
   /// 设置剪贴板中的富文本内容
   #[napi]
   pub fn set_rich_text(&self, text: String) -> Result<()> {
-    self.context.set_rich_text(text).map_err(|e| {
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return wayland::set_rich_text(text).map_err(|e| {
+        Error::new(
+          Status::GenericFailure,
+          format!("Failed to set rich text: {e}"),
+        )
+      });
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    context.set_rich_text(text).map_err(|e| {
       Error::new(
         Status::GenericFailure,
         format!("Failed to set rich text: {e}"),
@@ -178,43 +278,45 @@ impl ClipboardManager {
   /// 获取剪贴板中的图片数据（以 base64 编码返回）
   #[napi]
   pub fn get_image_base64(&self) -> Result<String> {
-    let image_data = self
-      .context
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      let image_data = wayland::get_image_raw()
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
+      let png_bytes = image_bytes_to_png_bytes(&image_data, "Failed to get image")?;
+      return Ok(BASE64_STANDARD.encode(png_bytes));
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    let image_data = context
       .get_image()
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
 
-    let png_data = image_data.to_png().map_err(|e| {
-      Error::new(
-        Status::GenericFailure,
-        format!("Failed to convert image to PNG: {e}"),
-      )
-    })?;
-
-    Ok(BASE64_STANDARD.encode(png_data.get_bytes()))
+    let png_bytes = image_to_png_bytes(&image_data, "Failed to get image")?;
+    Ok(BASE64_STANDARD.encode(png_bytes))
   }
 
   /// 获取剪贴板中的图片详细信息（包含宽度、高度、大小和原始数据）
   #[napi]
   pub fn get_image_data(&self) -> Result<ImageData> {
-    let image_data = self
-      .context
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      let image_data = wayland::get_image_raw()
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
+      return image_bytes_to_image_data(&image_data, "Failed to get image");
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    let image_data = context
       .get_image()
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
 
     let (width, height) = image_data.get_size();
-    let png_data = image_data.to_png().map_err(|e| {
-      Error::new(
-        Status::GenericFailure,
-        format!("Failed to convert image to PNG: {e}"),
-      )
-    })?;
-
-    let bytes = png_data.get_bytes();
+    let png_bytes = image_to_png_bytes(&image_data, "Failed to get image")?;
     Ok(ImageData {
       width,
       height,
-      size: bytes.len() as u32,
-      data: Buffer::from(bytes.to_vec()),
+      size: png_bytes.len() as u32,
+      data: Buffer::from(png_bytes),
     })
   }
 
@@ -232,8 +334,15 @@ impl ClipboardManager {
       )
     })?;
 
-    self
-      .context
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      let png_bytes = image_to_png_bytes(&rust_image, "Failed to set image")?;
+      return wayland::set_image_raw(png_bytes)
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set image: {e}")));
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    context
       .set_image(rust_image)
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set image: {e}")))
   }
@@ -248,8 +357,15 @@ impl ClipboardManager {
       )
     })?;
 
-    self
-      .context
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      let png_bytes = image_to_png_bytes(&rust_image, "Failed to set image")?;
+      return wayland::set_image_raw(png_bytes)
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set image: {e}")));
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    context
       .set_image(rust_image)
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set image: {e}")))
   }
@@ -257,26 +373,34 @@ impl ClipboardManager {
   /// 获取剪贴板中的图片原始数据（Buffer）
   #[napi]
   pub fn get_image_raw(&self) -> Result<Buffer> {
-    let image_data = self
-      .context
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      let image_data = wayland::get_image_raw()
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
+      let png_bytes = image_bytes_to_png_bytes(&image_data, "Failed to get image")?;
+      return Ok(Buffer::from(png_bytes));
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    let image_data = context
       .get_image()
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
 
-    let png_data = image_data.to_png().map_err(|e| {
-      Error::new(
-        Status::GenericFailure,
-        format!("Failed to convert image to PNG: {e}"),
-      )
-    })?;
-
-    Ok(Buffer::from(png_data.get_bytes().to_vec()))
+    let png_bytes = image_to_png_bytes(&image_data, "Failed to get image")?;
+    Ok(Buffer::from(png_bytes))
   }
 
   /// 获取剪贴板中的文件列表
   #[napi]
   pub fn get_files(&self) -> Result<Vec<String>> {
-    self
-      .context
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return wayland::get_files()
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get files: {e}")));
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    context
       .get_files()
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get files: {e}")))
   }
@@ -284,8 +408,14 @@ impl ClipboardManager {
   /// 设置剪贴板中的文件列表
   #[napi]
   pub fn set_files(&self, files: Vec<String>) -> Result<()> {
-    self
-      .context
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return wayland::set_files(files)
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set files: {e}")));
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    context
       .set_files(files)
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set files: {e}")))
   }
@@ -293,8 +423,14 @@ impl ClipboardManager {
   /// 设置剪贴板中的自定义格式数据
   #[napi]
   pub fn set_buffer(&self, format: String, buffer: Buffer) -> Result<()> {
-    self
-      .context
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return wayland::set_buffer(format, buffer.to_vec())
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set buffer: {e}")));
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    context
       .set_buffer(&format, buffer.to_vec())
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set buffer: {e}")))
   }
@@ -302,8 +438,15 @@ impl ClipboardManager {
   /// 获取剪贴板中的自定义格式数据
   #[napi]
   pub fn get_buffer(&self, format: String) -> Result<Buffer> {
-    let data = self
-      .context
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      let data = wayland::get_buffer(format)
+        .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get buffer: {e}")))?;
+      return Ok(Buffer::from(data));
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    let data = context
       .get_buffer(&format)
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get buffer: {e}")))?;
     Ok(Buffer::from(data))
@@ -312,6 +455,16 @@ impl ClipboardManager {
   /// 设置剪贴板中的复合内容（可同时设置多种格式）
   #[napi]
   pub fn set_contents(&self, contents: ClipboardData) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return wayland::set_contents(contents).map_err(|e| {
+        Error::new(
+          Status::GenericFailure,
+          format!("Failed to set contents: {e}"),
+        )
+      });
+    }
+
     use clipboard_rs::ClipboardContent;
 
     let mut clipboard_contents = Vec::new();
@@ -343,7 +496,8 @@ impl ClipboardManager {
       clipboard_contents.push(ClipboardContent::Files(files));
     }
 
-    self.context.set(clipboard_contents).map_err(|e| {
+    let context = get_context_or_error(self.context.as_ref())?;
+    context.set(clipboard_contents).map_err(|e| {
       Error::new(
         Status::GenericFailure,
         format!("Failed to set contents: {e}"),
@@ -354,12 +508,12 @@ impl ClipboardManager {
   /// 检查剪贴板是否包含指定格式的内容
   #[napi]
   pub fn has_format(&self, format: String) -> Result<bool> {
-    let content_format = match format.as_str() {
-      "text" => ContentFormat::Text,
-      "html" => ContentFormat::Html,
-      "rtf" | "rich_text" => ContentFormat::Rtf,
-      "image" => ContentFormat::Image,
-      "files" => ContentFormat::Files,
+    let normalized_format = match format.as_str() {
+      "text" => "text",
+      "html" => "html",
+      "rtf" | "rich_text" => "rtf",
+      "image" => "image",
+      "files" => "files",
       _ => {
         return Err(Error::new(
           Status::InvalidArg,
@@ -368,13 +522,44 @@ impl ClipboardManager {
       }
     };
 
-    Ok(self.context.has(content_format))
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return wayland::has_format(normalized_format).map_err(|e| {
+        Error::new(
+          Status::GenericFailure,
+          format!("Failed to check format: {e}"),
+        )
+      });
+    }
+
+    let content_format = match normalized_format {
+      "text" => ContentFormat::Text,
+      "html" => ContentFormat::Html,
+      "rtf" => ContentFormat::Rtf,
+      "image" => ContentFormat::Image,
+      "files" => ContentFormat::Files,
+      _ => unreachable!("normalized format should only be known values"),
+    };
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    Ok(context.has(content_format))
   }
 
   /// 获取剪贴板中所有可用的格式
   #[napi]
   pub fn get_available_formats(&self) -> Result<Vec<String>> {
-    self.context.available_formats().map_err(|e| {
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return wayland::get_available_formats().map_err(|e| {
+        Error::new(
+          Status::GenericFailure,
+          format!("Failed to get available formats: {e}"),
+        )
+      });
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    context.available_formats().map_err(|e| {
       Error::new(
         Status::GenericFailure,
         format!("Failed to get available formats: {e}"),
@@ -385,7 +570,18 @@ impl ClipboardManager {
   /// 清空剪贴板
   #[napi]
   pub fn clear(&self) -> Result<()> {
-    self.context.clear().map_err(|e| {
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return wayland::clear().map_err(|e| {
+        Error::new(
+          Status::GenericFailure,
+          format!("Failed to clear clipboard: {e}"),
+        )
+      });
+    }
+
+    let context = get_context_or_error(self.context.as_ref())?;
+    context.clear().map_err(|e| {
       Error::new(
         Status::GenericFailure,
         format!("Failed to clear clipboard: {e}"),
@@ -396,6 +592,16 @@ impl ClipboardManager {
   /// 异步获取剪贴板文本内容
   #[napi]
   pub async fn get_text_async(&self) -> Result<String> {
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return tokio::task::spawn_blocking(move || {
+        wayland::get_text()
+          .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get text: {e}")))
+      })
+      .await
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {e}")))?;
+    }
+
     let context = ClipboardContext::new().map_err(|e| {
       Error::new(
         Status::GenericFailure,
@@ -415,6 +621,16 @@ impl ClipboardManager {
   /// 异步设置剪贴板文本内容
   #[napi]
   pub async fn set_text_async(&self, text: String) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return tokio::task::spawn_blocking(move || {
+        wayland::set_text(text)
+          .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set text: {e}")))
+      })
+      .await
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {e}")))?;
+    }
+
     let context = ClipboardContext::new().map_err(|e| {
       Error::new(
         Status::GenericFailure,
@@ -434,6 +650,18 @@ impl ClipboardManager {
   /// 异步获取剪贴板图片数据（以 base64 编码返回）
   #[napi]
   pub async fn get_image_base64_async(&self) -> Result<String> {
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return tokio::task::spawn_blocking(move || {
+        let image_data = wayland::get_image_raw()
+          .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
+        let png_bytes = image_bytes_to_png_bytes(&image_data, "Failed to get image")?;
+        Ok(BASE64_STANDARD.encode(png_bytes))
+      })
+      .await
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {e}")))?;
+    }
+
     let context = ClipboardContext::new().map_err(|e| {
       Error::new(
         Status::GenericFailure,
@@ -445,15 +673,8 @@ impl ClipboardManager {
       let image_data = context
         .get_image()
         .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
-
-      let png_data = image_data.to_png().map_err(|e| {
-        Error::new(
-          Status::GenericFailure,
-          format!("Failed to convert image to PNG: {e}"),
-        )
-      })?;
-
-      Ok(BASE64_STANDARD.encode(png_data.get_bytes()))
+      let png_bytes = image_to_png_bytes(&image_data, "Failed to get image")?;
+      Ok(BASE64_STANDARD.encode(png_bytes))
     })
     .await
     .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {e}")))?
@@ -462,6 +683,17 @@ impl ClipboardManager {
   /// 异步获取剪贴板图片详细信息（包含宽度、高度、大小和原始数据）
   #[napi]
   pub async fn get_image_data_async(&self) -> Result<ImageData> {
+    #[cfg(target_os = "linux")]
+    if is_wayland_environment() {
+      return tokio::task::spawn_blocking(move || {
+        let image_data = wayland::get_image_raw()
+          .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
+        image_bytes_to_image_data(&image_data, "Failed to get image")
+      })
+      .await
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {e}")))?;
+    }
+
     let context = ClipboardContext::new().map_err(|e| {
       Error::new(
         Status::GenericFailure,
@@ -475,19 +707,12 @@ impl ClipboardManager {
         .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
 
       let (width, height) = image_data.get_size();
-      let png_data = image_data.to_png().map_err(|e| {
-        Error::new(
-          Status::GenericFailure,
-          format!("Failed to convert image to PNG: {e}"),
-        )
-      })?;
-
-      let bytes = png_data.get_bytes();
+      let png_bytes = image_to_png_bytes(&image_data, "Failed to get image")?;
       Ok(ImageData {
         width,
         height,
-        size: bytes.len() as u32,
-        data: Buffer::from(bytes.to_vec()),
+        size: png_bytes.len() as u32,
+        data: Buffer::from(png_bytes),
       })
     })
     .await
@@ -500,6 +725,12 @@ impl ClipboardManager {
 /// 快速获取剪贴板文本内容
 #[napi]
 pub fn get_clipboard_text() -> Result<String> {
+  #[cfg(target_os = "linux")]
+  if is_wayland_environment() {
+    return wayland::get_text()
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get text: {e}")));
+  }
+
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
@@ -515,6 +746,12 @@ pub fn get_clipboard_text() -> Result<String> {
 /// 快速设置剪贴板文本内容
 #[napi]
 pub fn set_clipboard_text(text: String) -> Result<()> {
+  #[cfg(target_os = "linux")]
+  if is_wayland_environment() {
+    return wayland::set_text(text)
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set text: {e}")));
+  }
+
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
@@ -530,6 +767,12 @@ pub fn set_clipboard_text(text: String) -> Result<()> {
 /// 快速获取剪贴板 HTML 内容
 #[napi]
 pub fn get_clipboard_html() -> Result<String> {
+  #[cfg(target_os = "linux")]
+  if is_wayland_environment() {
+    return wayland::get_html()
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get HTML: {e}")));
+  }
+
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
@@ -545,6 +788,12 @@ pub fn get_clipboard_html() -> Result<String> {
 /// 快速设置剪贴板 HTML 内容
 #[napi]
 pub fn set_clipboard_html(html: String) -> Result<()> {
+  #[cfg(target_os = "linux")]
+  if is_wayland_environment() {
+    return wayland::set_html(html)
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set HTML: {e}")));
+  }
+
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
@@ -560,6 +809,14 @@ pub fn set_clipboard_html(html: String) -> Result<()> {
 /// 快速获取剪贴板图片（base64 编码）
 #[napi]
 pub fn get_clipboard_image() -> Result<String> {
+  #[cfg(target_os = "linux")]
+  if is_wayland_environment() {
+    let image_data = wayland::get_image_raw()
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
+    let png_bytes = image_bytes_to_png_bytes(&image_data, "Failed to get image")?;
+    return Ok(BASE64_STANDARD.encode(png_bytes));
+  }
+
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
@@ -571,19 +828,20 @@ pub fn get_clipboard_image() -> Result<String> {
     .get_image()
     .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
 
-  let png_data = image_data.to_png().map_err(|e| {
-    Error::new(
-      Status::GenericFailure,
-      format!("Failed to convert image to PNG: {e}"),
-    )
-  })?;
-
-  Ok(BASE64_STANDARD.encode(png_data.get_bytes()))
+  let png_bytes = image_to_png_bytes(&image_data, "Failed to get image")?;
+  Ok(BASE64_STANDARD.encode(png_bytes))
 }
 
 /// 快速获取剪贴板图片详细信息（包含宽度、高度、大小和原始数据）
 #[napi]
 pub fn get_clipboard_image_data() -> Result<ImageData> {
+  #[cfg(target_os = "linux")]
+  if is_wayland_environment() {
+    let image_data = wayland::get_image_raw()
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
+    return image_bytes_to_image_data(&image_data, "Failed to get image");
+  }
+
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
@@ -596,32 +854,18 @@ pub fn get_clipboard_image_data() -> Result<ImageData> {
     .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
 
   let (width, height) = image_data.get_size();
-  let png_data = image_data.to_png().map_err(|e| {
-    Error::new(
-      Status::GenericFailure,
-      format!("Failed to convert image to PNG: {e}"),
-    )
-  })?;
-
-  let bytes = png_data.get_bytes();
+  let png_bytes = image_to_png_bytes(&image_data, "Failed to get image")?;
   Ok(ImageData {
     width,
     height,
-    size: bytes.len() as u32,
-    data: Buffer::from(bytes.to_vec()),
+    size: png_bytes.len() as u32,
+    data: Buffer::from(png_bytes),
   })
 }
 
 /// 快速设置剪贴板图片（从 base64 编码）
 #[napi]
 pub fn set_clipboard_image(base64_data: String) -> Result<()> {
-  let context = ClipboardContext::new().map_err(|e| {
-    Error::new(
-      Status::GenericFailure,
-      format!("Failed to create clipboard context: {e}"),
-    )
-  })?;
-
   let image_data = BASE64_STANDARD
     .decode(base64_data)
     .map_err(|e| Error::new(Status::InvalidArg, format!("Invalid base64 data: {e}")))?;
@@ -633,6 +877,20 @@ pub fn set_clipboard_image(base64_data: String) -> Result<()> {
     )
   })?;
 
+  #[cfg(target_os = "linux")]
+  if is_wayland_environment() {
+    let png_bytes = image_to_png_bytes(&rust_image, "Failed to set image")?;
+    return wayland::set_image_raw(png_bytes)
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set image: {e}")));
+  }
+
+  let context = ClipboardContext::new().map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("Failed to create clipboard context: {e}"),
+    )
+  })?;
+
   context
     .set_image(rust_image)
     .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set image: {e}")))
@@ -641,17 +899,24 @@ pub fn set_clipboard_image(base64_data: String) -> Result<()> {
 /// 快速设置剪贴板图片（从原始字节数据）
 #[napi]
 pub fn set_clipboard_image_raw(image_data: Buffer) -> Result<()> {
-  let context = ClipboardContext::new().map_err(|e| {
-    Error::new(
-      Status::GenericFailure,
-      format!("Failed to create clipboard context: {e}"),
-    )
-  })?;
-
   let rust_image = RustImageData::from_bytes(&image_data).map_err(|e| {
     Error::new(
       Status::GenericFailure,
       format!("Failed to create image from bytes: {e}"),
+    )
+  })?;
+
+  #[cfg(target_os = "linux")]
+  if is_wayland_environment() {
+    let png_bytes = image_to_png_bytes(&rust_image, "Failed to set image")?;
+    return wayland::set_image_raw(png_bytes)
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set image: {e}")));
+  }
+
+  let context = ClipboardContext::new().map_err(|e| {
+    Error::new(
+      Status::GenericFailure,
+      format!("Failed to create clipboard context: {e}"),
     )
   })?;
 
@@ -663,6 +928,14 @@ pub fn set_clipboard_image_raw(image_data: Buffer) -> Result<()> {
 /// 快速获取剪贴板图片原始数据（Buffer）
 #[napi]
 pub fn get_clipboard_image_raw() -> Result<Buffer> {
+  #[cfg(target_os = "linux")]
+  if is_wayland_environment() {
+    let image_data = wayland::get_image_raw()
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
+    let png_bytes = image_bytes_to_png_bytes(&image_data, "Failed to get image")?;
+    return Ok(Buffer::from(png_bytes));
+  }
+
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
@@ -674,19 +947,19 @@ pub fn get_clipboard_image_raw() -> Result<Buffer> {
     .get_image()
     .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
 
-  let png_data = image_data.to_png().map_err(|e| {
-    Error::new(
-      Status::GenericFailure,
-      format!("Failed to convert image to PNG: {e}"),
-    )
-  })?;
-
-  Ok(Buffer::from(png_data.get_bytes().to_vec()))
+  let png_bytes = image_to_png_bytes(&image_data, "Failed to get image")?;
+  Ok(Buffer::from(png_bytes))
 }
 
 /// 快速设置剪贴板自定义格式数据
 #[napi]
 pub fn set_clipboard_buffer(format: String, buffer: Buffer) -> Result<()> {
+  #[cfg(target_os = "linux")]
+  if is_wayland_environment() {
+    return wayland::set_buffer(format, buffer.to_vec())
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set buffer: {e}")));
+  }
+
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
@@ -702,6 +975,13 @@ pub fn set_clipboard_buffer(format: String, buffer: Buffer) -> Result<()> {
 /// 快速获取剪贴板自定义格式数据
 #[napi]
 pub fn get_clipboard_buffer(format: String) -> Result<Buffer> {
+  #[cfg(target_os = "linux")]
+  if is_wayland_environment() {
+    let data = wayland::get_buffer(format)
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get buffer: {e}")))?;
+    return Ok(Buffer::from(data));
+  }
+
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
@@ -718,6 +998,12 @@ pub fn get_clipboard_buffer(format: String) -> Result<Buffer> {
 /// 快速设置剪贴板文件列表
 #[napi]
 pub fn set_clipboard_files(files: Vec<String>) -> Result<()> {
+  #[cfg(target_os = "linux")]
+  if is_wayland_environment() {
+    return wayland::set_files(files)
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set files: {e}")));
+  }
+
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
@@ -733,6 +1019,12 @@ pub fn set_clipboard_files(files: Vec<String>) -> Result<()> {
 /// 快速获取剪贴板文件列表
 #[napi]
 pub fn get_clipboard_files() -> Result<Vec<String>> {
+  #[cfg(target_os = "linux")]
+  if is_wayland_environment() {
+    return wayland::get_files()
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get files: {e}")));
+  }
+
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
@@ -748,6 +1040,16 @@ pub fn get_clipboard_files() -> Result<Vec<String>> {
 /// 快速设置剪贴板复合内容（可同时设置多种格式）
 #[napi]
 pub fn set_clipboard_contents(contents: ClipboardData) -> Result<()> {
+  #[cfg(target_os = "linux")]
+  if is_wayland_environment() {
+    return wayland::set_contents(contents).map_err(|e| {
+      Error::new(
+        Status::GenericFailure,
+        format!("Failed to set contents: {e}"),
+      )
+    });
+  }
+
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
@@ -797,6 +1099,16 @@ pub fn set_clipboard_contents(contents: ClipboardData) -> Result<()> {
 /// 快速获取完整的剪贴板数据
 #[napi]
 pub fn get_full_clipboard_data() -> Result<ClipboardData> {
+  #[cfg(target_os = "linux")]
+  if is_wayland_environment() {
+    return wayland::get_full_clipboard_data().map_err(|e| {
+      Error::new(
+        Status::GenericFailure,
+        format!("Failed to get clipboard data: {e}"),
+      )
+    });
+  }
+
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,
@@ -810,6 +1122,16 @@ pub fn get_full_clipboard_data() -> Result<ClipboardData> {
 /// 快速清空剪贴板
 #[napi]
 pub fn clear_clipboard() -> Result<()> {
+  #[cfg(target_os = "linux")]
+  if is_wayland_environment() {
+    return wayland::clear().map_err(|e| {
+      Error::new(
+        Status::GenericFailure,
+        format!("Failed to clear clipboard: {e}"),
+      )
+    });
+  }
+
   let context = ClipboardContext::new().map_err(|e| {
     Error::new(
       Status::GenericFailure,

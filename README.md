@@ -1,10 +1,8 @@
 # `@teddyzhu/clipboard`
 
-v0.0.6
-
 ![https://github.com/Teddy-Zhu/node-clipboard-rs/actions](https://github.com/Teddy-Zhu/node-clipboard-rs/workflows/CI/badge.svg)
 
-> 基于 napi-rs 包装 clipboard-rs 的 Node.js 剪贴板库，提供跨平台剪贴板操作功能
+> 基于 napi-rs 包装 clipboard-rs/wl-clipboard-rs 的 Node.js 剪贴板库，提供跨平台剪贴板操作功能
 
 ## 特性
 

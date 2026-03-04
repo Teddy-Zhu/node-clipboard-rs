@@ -1,10 +1,20 @@
 use crate::{ClipboardData, ImageData};
+use clipboard_rs::common::{RustImage, RustImageData};
 use napi::bindgen_prelude::Buffer;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
+use std::io::Read;
 use std::sync::mpsc;
 use std::thread;
 use wayland_clipboard_listener::{
   ClipBoardListenMessage, WlClipboardListenerError, WlClipboardPasteStream, WlListenType,
+};
+use wl_clipboard_rs::copy::{
+  self, ClipboardType as CopyClipboardType, Error as CopyError, MimeSource as CopyMimeSource,
+  MimeType as CopyMimeType, Options as CopyOptions, Seat as CopySeat, Source as CopySource,
+};
+use wl_clipboard_rs::paste::{
+  self, ClipboardType as PasteClipboardType, Error as PasteError, MimeType as PasteMimeType,
+  Seat as PasteSeat,
 };
 
 macro_rules! wayland_log {
@@ -201,6 +211,414 @@ fn wayland_payload_head_hex(payload: &[u8], max_bytes: usize) -> String {
     .map(|byte| format!("{byte:02x}"))
     .collect::<Vec<_>>()
     .join(" ")
+}
+
+const WAYLAND_RTF_MIME_PRIORITY: &[&str] = &[
+  "text/rtf",
+  "application/rtf",
+  "application/x-rtf",
+  "text/richtext",
+];
+
+const WAYLAND_IMAGE_MIME_PRIORITY: &[&str] = &[
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/bmp",
+  "image/gif",
+  "application/x-qt-image",
+];
+
+const WAYLAND_FILES_MIME_PRIORITY: &[&str] = &[
+  "text/uri-list",
+  "x-special/gnome-copied-files",
+  "x-special/nautilus-clipboard",
+];
+
+type WaylandResult<T> = std::result::Result<T, String>;
+
+fn wayland_paste_error_detail(err: &PasteError) -> String {
+  err.to_string()
+}
+
+fn wayland_copy_error_detail(err: &CopyError) -> String {
+  err.to_string()
+}
+
+fn get_wayland_mime_types_ordered() -> WaylandResult<Vec<String>> {
+  paste::get_mime_types_ordered(PasteClipboardType::Regular, PasteSeat::Unspecified).map_err(|e| {
+    format!(
+      "Failed to query MIME types: {}",
+      wayland_paste_error_detail(&e)
+    )
+  })
+}
+
+fn get_wayland_mime_types_ordered_or_empty() -> WaylandResult<Vec<String>> {
+  match paste::get_mime_types_ordered(PasteClipboardType::Regular, PasteSeat::Unspecified) {
+    Ok(mimes) => Ok(mimes),
+    Err(PasteError::ClipboardEmpty) | Err(PasteError::NoSeats) => Ok(Vec::new()),
+    Err(e) => Err(format!(
+      "Failed to query MIME types: {}",
+      wayland_paste_error_detail(&e)
+    )),
+  }
+}
+
+fn get_wayland_contents_bytes(
+  requested_mime: PasteMimeType<'_>,
+) -> WaylandResult<(Vec<u8>, String)> {
+  let (mut pipe, actual_mime) = paste::get_contents(
+    PasteClipboardType::Regular,
+    PasteSeat::Unspecified,
+    requested_mime,
+  )
+  .map_err(|e| {
+    format!(
+      "Failed to read clipboard content: {}",
+      wayland_paste_error_detail(&e)
+    )
+  })?;
+
+  let mut payload = Vec::new();
+  pipe
+    .read_to_end(&mut payload)
+    .map_err(|e| format!("Failed to read clipboard stream: {e}"))?;
+
+  Ok((payload, actual_mime))
+}
+
+fn find_wayland_mime<'a>(offered_mimes: &'a [String], preferred: &[&str]) -> Option<&'a str> {
+  for desired in preferred {
+    if let Some(found) = offered_mimes
+      .iter()
+      .find(|mime| mime.eq_ignore_ascii_case(desired))
+    {
+      return Some(found.as_str());
+    }
+  }
+  None
+}
+
+fn to_wayland_image_data(payload: Vec<u8>) -> ImageData {
+  match RustImageData::from_bytes(&payload) {
+    Ok(image_data) => {
+      let (width, height) = image_data.get_size();
+      match image_data.to_png() {
+        Ok(png_data) => {
+          let bytes = png_data.get_bytes();
+          ImageData {
+            width,
+            height,
+            size: bytes.len() as u32,
+            data: Buffer::from(bytes.to_vec()),
+          }
+        }
+        Err(_) => ImageData {
+          width,
+          height,
+          size: payload.len() as u32,
+          data: Buffer::from(payload),
+        },
+      }
+    }
+    Err(_) => ImageData {
+      width: 0,
+      height: 0,
+      size: payload.len() as u32,
+      data: Buffer::from(payload),
+    },
+  }
+}
+
+fn append_wayland_file_sources(target: &mut Vec<CopyMimeSource>, files: &[String]) {
+  if files.is_empty() {
+    return;
+  }
+
+  let mut uri_list_payload = files.join("\r\n");
+  uri_list_payload.push_str("\r\n");
+
+  target.push(CopyMimeSource {
+    source: CopySource::Bytes(uri_list_payload.into_bytes().into_boxed_slice()),
+    mime_type: CopyMimeType::Specific("text/uri-list".to_string()),
+  });
+
+  let mut gnome_payload = String::from("copy\n");
+  gnome_payload.push_str(&files.join("\n"));
+  gnome_payload.push('\n');
+
+  target.push(CopyMimeSource {
+    source: CopySource::Bytes(gnome_payload.as_bytes().to_vec().into_boxed_slice()),
+    mime_type: CopyMimeType::Specific("x-special/gnome-copied-files".to_string()),
+  });
+
+  target.push(CopyMimeSource {
+    source: CopySource::Bytes(gnome_payload.into_bytes().into_boxed_slice()),
+    mime_type: CopyMimeType::Specific("x-special/nautilus-clipboard".to_string()),
+  });
+}
+
+fn wayland_copy_single(source: Vec<u8>, mime_type: CopyMimeType) -> WaylandResult<()> {
+  let options = CopyOptions::new();
+  options
+    .copy(CopySource::Bytes(source.into_boxed_slice()), mime_type)
+    .map_err(|e| {
+      format!(
+        "Failed to write clipboard content: {}",
+        wayland_copy_error_detail(&e)
+      )
+    })
+}
+
+fn wayland_copy_multi(sources: Vec<CopyMimeSource>) -> WaylandResult<()> {
+  let options = CopyOptions::new();
+  options.copy_multi(sources).map_err(|e| {
+    format!(
+      "Failed to write clipboard content (multi mime): {}",
+      wayland_copy_error_detail(&e)
+    )
+  })
+}
+
+pub(crate) fn get_text() -> WaylandResult<String> {
+  let (payload, _) = get_wayland_contents_bytes(PasteMimeType::Text)?;
+  String::from_utf8(payload).map_err(|e| format!("Clipboard text is not valid UTF-8: {e}"))
+}
+
+pub(crate) fn set_text(text: String) -> WaylandResult<()> {
+  wayland_copy_single(text.into_bytes(), CopyMimeType::Text)
+}
+
+pub(crate) fn get_html() -> WaylandResult<String> {
+  let offered_mimes = get_wayland_mime_types_ordered()?;
+  let selected_mime = find_wayland_mime(&offered_mimes, &["text/html"])
+    .ok_or_else(|| "Clipboard does not contain HTML data".to_string())?;
+  let (payload, _) = get_wayland_contents_bytes(PasteMimeType::Specific(selected_mime))?;
+  String::from_utf8(payload).map_err(|e| format!("Clipboard HTML is not valid UTF-8: {e}"))
+}
+
+pub(crate) fn set_html(html: String) -> WaylandResult<()> {
+  wayland_copy_single(
+    html.into_bytes(),
+    CopyMimeType::Specific("text/html".to_string()),
+  )
+}
+
+pub(crate) fn get_rich_text() -> WaylandResult<String> {
+  let offered_mimes = get_wayland_mime_types_ordered()?;
+  let selected_mime = find_wayland_mime(&offered_mimes, WAYLAND_RTF_MIME_PRIORITY)
+    .or_else(|| {
+      offered_mimes
+        .iter()
+        .find(|mime| is_wayland_rtf_mime(mime))
+        .map(|x| x.as_str())
+    })
+    .ok_or_else(|| "Clipboard does not contain rich text data".to_string())?;
+  let (payload, _) = get_wayland_contents_bytes(PasteMimeType::Specific(selected_mime))?;
+  String::from_utf8(payload).map_err(|e| format!("Clipboard rich text is not valid UTF-8: {e}"))
+}
+
+pub(crate) fn set_rich_text(text: String) -> WaylandResult<()> {
+  wayland_copy_single(
+    text.into_bytes(),
+    CopyMimeType::Specific("text/rtf".to_string()),
+  )
+}
+
+pub(crate) fn get_image_raw() -> WaylandResult<Vec<u8>> {
+  let offered_mimes = get_wayland_mime_types_ordered()?;
+  let selected_mime = find_wayland_mime(&offered_mimes, WAYLAND_IMAGE_MIME_PRIORITY)
+    .or_else(|| {
+      offered_mimes
+        .iter()
+        .find(|mime| is_wayland_image_mime(mime))
+        .map(|x| x.as_str())
+    })
+    .ok_or_else(|| "Clipboard does not contain image data".to_string())?;
+
+  let (payload, actual_mime) = get_wayland_contents_bytes(PasteMimeType::Specific(selected_mime))?;
+  wayland_log!(
+    "get_image_raw: selected_mime={}, actual_mime={}, bytes={}",
+    selected_mime,
+    actual_mime,
+    payload.len()
+  );
+  Ok(payload)
+}
+
+pub(crate) fn set_image_raw(image_data: Vec<u8>) -> WaylandResult<()> {
+  let mime_type = match detect_wayland_image_magic(&image_data) {
+    Some("png") => CopyMimeType::Specific("image/png".to_string()),
+    Some("jpeg") => CopyMimeType::Specific("image/jpeg".to_string()),
+    Some("gif") => CopyMimeType::Specific("image/gif".to_string()),
+    Some("bmp") => CopyMimeType::Specific("image/bmp".to_string()),
+    Some("webp") => CopyMimeType::Specific("image/webp".to_string()),
+    _ => CopyMimeType::Autodetect,
+  };
+
+  wayland_copy_single(image_data, mime_type)
+}
+
+pub(crate) fn get_files() -> WaylandResult<Vec<String>> {
+  let offered_mimes = get_wayland_mime_types_ordered()?;
+  let selected_mime = find_wayland_mime(&offered_mimes, WAYLAND_FILES_MIME_PRIORITY)
+    .or_else(|| {
+      offered_mimes
+        .iter()
+        .find(|mime| is_wayland_files_mime(mime))
+        .map(|x| x.as_str())
+    })
+    .ok_or_else(|| "Clipboard does not contain files data".to_string())?;
+
+  let (payload, _) = get_wayland_contents_bytes(PasteMimeType::Specific(selected_mime))?;
+  decode_wayland_files(&payload)
+    .ok_or_else(|| "Failed to decode clipboard files payload".to_string())
+}
+
+pub(crate) fn set_files(files: Vec<String>) -> WaylandResult<()> {
+  if files.is_empty() {
+    return clear();
+  }
+
+  let mut sources = Vec::new();
+  append_wayland_file_sources(&mut sources, &files);
+  wayland_copy_multi(sources)
+}
+
+pub(crate) fn set_buffer(format: String, buffer: Vec<u8>) -> WaylandResult<()> {
+  wayland_copy_single(buffer, CopyMimeType::Specific(format))
+}
+
+pub(crate) fn get_buffer(format: String) -> WaylandResult<Vec<u8>> {
+  let (payload, _) = get_wayland_contents_bytes(PasteMimeType::Specific(&format))?;
+  Ok(payload)
+}
+
+pub(crate) fn set_contents(contents: ClipboardData) -> WaylandResult<()> {
+  let mut sources = Vec::new();
+
+  if let Some(text) = contents.text {
+    sources.push(CopyMimeSource {
+      source: CopySource::Bytes(text.into_bytes().into_boxed_slice()),
+      mime_type: CopyMimeType::Text,
+    });
+  }
+
+  if let Some(html) = contents.html {
+    sources.push(CopyMimeSource {
+      source: CopySource::Bytes(html.into_bytes().into_boxed_slice()),
+      mime_type: CopyMimeType::Specific("text/html".to_string()),
+    });
+  }
+
+  if let Some(rtf) = contents.rtf {
+    sources.push(CopyMimeSource {
+      source: CopySource::Bytes(rtf.into_bytes().into_boxed_slice()),
+      mime_type: CopyMimeType::Specific("text/rtf".to_string()),
+    });
+  }
+
+  if let Some(image_data) = contents.image {
+    let mime_type = match detect_wayland_image_magic(image_data.data.as_ref()) {
+      Some("png") => CopyMimeType::Specific("image/png".to_string()),
+      Some("jpeg") => CopyMimeType::Specific("image/jpeg".to_string()),
+      Some("gif") => CopyMimeType::Specific("image/gif".to_string()),
+      Some("bmp") => CopyMimeType::Specific("image/bmp".to_string()),
+      Some("webp") => CopyMimeType::Specific("image/webp".to_string()),
+      _ => CopyMimeType::Autodetect,
+    };
+    sources.push(CopyMimeSource {
+      source: CopySource::Bytes(image_data.data.to_vec().into_boxed_slice()),
+      mime_type,
+    });
+  }
+
+  if let Some(files) = contents.files {
+    append_wayland_file_sources(&mut sources, &files);
+  }
+
+  if sources.is_empty() {
+    clear()
+  } else {
+    wayland_copy_multi(sources)
+  }
+}
+
+pub(crate) fn has_format(format: &str) -> WaylandResult<bool> {
+  let available_formats = get_available_formats()?;
+  Ok(has_wayland_format(&available_formats, format))
+}
+
+pub(crate) fn get_available_formats() -> WaylandResult<Vec<String>> {
+  let offered_mimes = get_wayland_mime_types_ordered_or_empty()?;
+  let mut formats = infer_wayland_available_formats(&offered_mimes);
+
+  for mime in offered_mimes {
+    let is_well_known_standard = is_wayland_text_mime(&mime)
+      || is_wayland_rtf_mime(&mime)
+      || is_wayland_html_mime(&mime)
+      || is_wayland_image_mime(&mime)
+      || is_wayland_files_mime(&mime);
+    if !is_well_known_standard {
+      push_wayland_format(&mut formats, &mime);
+    }
+  }
+
+  Ok(formats)
+}
+
+pub(crate) fn clear() -> WaylandResult<()> {
+  copy::clear(CopyClipboardType::Regular, CopySeat::All).map_err(|e| {
+    format!(
+      "Failed to clear clipboard: {}",
+      wayland_copy_error_detail(&e)
+    )
+  })
+}
+
+pub(crate) fn get_full_clipboard_data() -> WaylandResult<ClipboardData> {
+  let offered_mimes = get_wayland_mime_types_ordered_or_empty()?;
+  let available_formats = infer_wayland_available_formats(&offered_mimes);
+
+  let text = if has_wayland_format(&available_formats, "text") {
+    get_text().ok()
+  } else {
+    None
+  };
+
+  let html = if has_wayland_format(&available_formats, "html") {
+    get_html().ok()
+  } else {
+    None
+  };
+
+  let rtf = if has_wayland_format(&available_formats, "rtf") {
+    get_rich_text().ok()
+  } else {
+    None
+  };
+
+  let image = if has_wayland_format(&available_formats, "image") {
+    get_image_raw().ok().map(to_wayland_image_data)
+  } else {
+    None
+  };
+
+  let files = if has_wayland_format(&available_formats, "files") {
+    get_files().ok()
+  } else {
+    None
+  };
+
+  Ok(ClipboardData {
+    available_formats,
+    text,
+    rtf,
+    html,
+    image,
+    files,
+  })
 }
 
 fn wayland_context_to_clipboard_data(message: ClipBoardListenMessage) -> ClipboardData {

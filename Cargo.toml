@@ -18,6 +18,7 @@ tokio        = { version = "1.0", features = ["rt", "rt-multi-thread"] }
 # 仅在 Linux 平台上引入 wayland-clipboard-listener
 [target.'cfg(target_os = "linux")'.dependencies]
 wayland-clipboard-listener = "0.6.0"
+wl-clipboard-rs           = "0.9.3"
 
 [build-dependencies]
 napi-build = "2"
