@@ -69,7 +69,7 @@ jobs:
         with:
           components: clippy, rustfmt
       - name: Install dependencies
-        run: yarn install
+        run: npm install --no-package-lock
       - name: Oxlint
         run: yarn lint
       - name: Cargo fmt
@@ -142,7 +142,7 @@ jobs:
         if: ${{ matrix.settings.setup }}
         shell: bash
       - name: Install dependencies
-        run: yarn install
+        run: npm install --no-package-lock
       - name: Build
         run: ${{ matrix.settings.build }}
         shell: bash
@@ -189,7 +189,7 @@ jobs:
           cache: yarn
           architecture: ${{ matrix.settings.architecture }}
       - name: Install dependencies
-        run: yarn install
+        run: npm install --no-package-lock
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -243,10 +243,7 @@ jobs:
             }
           " >> $GITHUB_OUTPUT
       - name: Install dependencies
-        run: |
-          yarn config set --json supportedArchitectures.cpu '["current", "arm64", "x64", "arm"]'
-          yarn config set --json supportedArchitectures.libc '["current", "musl", "gnu"]'
-          yarn install
+        run: npm install --no-package-lock
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -285,7 +282,7 @@ jobs:
           node-version: 22
           cache: yarn
       - name: Install dependencies
-        run: yarn install
+        run: npm install --no-package-lock
       - name: create npm dirs
         run: yarn napi create-npm-dirs
       - name: Download all artifacts
