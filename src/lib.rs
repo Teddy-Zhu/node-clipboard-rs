@@ -9,11 +9,14 @@ use clipboard_rs::{
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
+use std::sync::OnceLock;
 use std::thread;
 
 // 仅在 Linux 下导入 Wayland 相关依赖
 #[cfg(target_os = "linux")]
-use wayland_clipboard_listener::{ClipBoardListenMessage, WlClipboardPasteStream, WlListenType};
+use wayland_clipboard_listener::{
+  ClipBoardListenMessage, WlClipboardListenerError, WlClipboardPasteStream, WlListenType,
+};
 
 /// 检测当前环境是否为 Wayland
 #[cfg(target_os = "linux")]
@@ -39,6 +42,40 @@ fn is_wayland_environment() -> bool {
   false
 }
 
+fn is_debug_logging_enabled() -> bool {
+  static ENABLED: OnceLock<bool> = OnceLock::new();
+  *ENABLED.get_or_init(|| {
+    std::env::var("CLIPBOARD_DEBUG")
+      .map(|value| {
+        let normalized = value.trim().to_ascii_lowercase();
+        !matches!(normalized.as_str(), "" | "0" | "false" | "off" | "no")
+      })
+      .unwrap_or(false)
+  })
+}
+
+macro_rules! listener_log {
+  ($($arg:tt)*) => {{
+    if is_debug_logging_enabled() {
+      eprintln!(
+        "[clipboard-rs][listener][{:?}] {}",
+        std::thread::current().id(),
+        format!($($arg)*)
+      );
+    }
+  }};
+}
+
+#[cfg(target_os = "linux")]
+fn wayland_error_detail(err: &WlClipboardListenerError) -> String {
+  match err {
+    WlClipboardListenerError::InitFailed(msg) => format!("InitFailed({msg})"),
+    WlClipboardListenerError::QueueError(msg) => format!("QueueError({msg})"),
+    WlClipboardListenerError::DispatchError(msg) => format!("DispatchError({msg})"),
+    WlClipboardListenerError::PipeError => "PipeError".to_string(),
+  }
+}
+
 /// 检测 Wayland 剪贴板监听是否可用
 ///
 /// 返回 true 表示当前环境支持 Wayland 剪贴板监听
@@ -47,11 +84,28 @@ pub fn is_wayland_clipboard_available() -> bool {
   #[cfg(target_os = "linux")]
   {
     if !is_wayland_environment() {
+      listener_log!(
+        "is_wayland_clipboard_available=false: not in wayland env (WAYLAND_DISPLAY={:?}, XDG_SESSION_TYPE={:?})",
+        std::env::var("WAYLAND_DISPLAY").ok(),
+        std::env::var("XDG_SESSION_TYPE").ok()
+      );
       return false;
     }
 
     // 尝试初始化 Wayland 剪贴板流来测试是否可用
-    WlClipboardPasteStream::init(WlListenType::ListenOnCopy).is_ok()
+    match WlClipboardPasteStream::init(WlListenType::ListenOnCopy) {
+      Ok(_) => {
+        listener_log!("is_wayland_clipboard_available=true");
+        true
+      }
+      Err(e) => {
+        listener_log!(
+          "is_wayland_clipboard_available=false: init failed: {}",
+          wayland_error_detail(&e)
+        );
+        false
+      }
+    }
   }
 
   #[cfg(not(target_os = "linux"))]
@@ -822,23 +876,36 @@ pub fn clear_clipboard() -> Result<()> {
 /// 将 Wayland 剪贴板消息转换为我们的 ClipboardData 格式
 #[cfg(target_os = "linux")]
 fn wayland_context_to_clipboard_data(message: ClipBoardListenMessage) -> ClipboardData {
+  let mime_type = message.context.mime_type;
+  let payload = message.context.context;
+  let payload_len = payload.len();
+  listener_log!(
+    "wayland message received: mime_type={}, bytes={}",
+    mime_type,
+    payload_len
+  );
+
   let mut available_formats = Vec::new();
   let mut text = None;
   let mut html = None;
   let mut image = None;
 
   // 根据 MIME 类型处理数据
-  match message.context.mime_type.as_str() {
+  match mime_type.as_str() {
     "text/plain" | "text/plain;charset=utf-8" | "UTF8_STRING" | "STRING" => {
       available_formats.push("text".to_string());
-      if let Ok(text_content) = String::from_utf8(message.context.context) {
+      if let Ok(text_content) = String::from_utf8(payload) {
         text = Some(text_content);
+      } else {
+        listener_log!("wayland text decode failed");
       }
     }
     "text/html" => {
       available_formats.push("html".to_string());
-      if let Ok(html_content) = String::from_utf8(message.context.context) {
+      if let Ok(html_content) = String::from_utf8(payload) {
         html = Some(html_content);
+      } else {
+        listener_log!("wayland html decode failed");
       }
     }
     "image/png" | "image/jpeg" | "image/gif" | "image/bmp" => {
@@ -847,15 +914,20 @@ fn wayland_context_to_clipboard_data(message: ClipBoardListenMessage) -> Clipboa
       image = Some(ImageData {
         width: 0,
         height: 0,
-        size: message.context.context.len() as u32,
-        data: Buffer::from(message.context.context),
+        size: payload_len as u32,
+        data: Buffer::from(payload),
       });
     }
     _ => {
       // 对于其他类型，尝试作为文本处理
-      if let Ok(text_content) = String::from_utf8(message.context.context) {
+      if let Ok(text_content) = String::from_utf8(payload) {
         available_formats.push("text".to_string());
         text = Some(text_content);
+      } else {
+        listener_log!(
+          "wayland unsupported mime_type and utf8 decode failed: mime_type={}",
+          mime_type
+        );
       }
     }
   }
@@ -978,6 +1050,12 @@ impl ClipboardListener {
   #[napi(constructor)]
   pub fn new() -> Result<Self> {
     let is_wayland = is_wayland_environment();
+    listener_log!(
+      "ClipboardListener::new is_wayland={}, WAYLAND_DISPLAY={:?}, XDG_SESSION_TYPE={:?}",
+      is_wayland,
+      std::env::var("WAYLAND_DISPLAY").ok(),
+      std::env::var("XDG_SESSION_TYPE").ok()
+    );
     Ok(ClipboardListener {
       listener_type: None,
       is_wayland,
@@ -989,8 +1067,15 @@ impl ClipboardListener {
   /// 自动根据当前环境选择合适的监听方式（Wayland 或通用）
   #[napi]
   pub fn watch(&mut self, callback: Function<ClipboardData, ()>) -> Result<()> {
+    listener_log!(
+      "watch called, current_listener_exists={}, is_wayland={}",
+      self.listener_type.is_some(),
+      self.is_wayland
+    );
+
     // 如果已经在监听，先停止
     if self.listener_type.is_some() {
+      listener_log!("watch called while already watching, stopping previous listener");
       self.stop()?;
     }
 
@@ -998,10 +1083,13 @@ impl ClipboardListener {
     let tsfn = callback
       .build_threadsafe_function()
       .build_callback(|ctx| Ok(ctx.value))?;
+    listener_log!("threadsafe callback created");
 
     if self.is_wayland {
+      listener_log!("starting wayland listener");
       self.watch_wayland(tsfn)
     } else {
+      listener_log!("starting generic listener");
       self.watch_generic(tsfn)
     }
   }
@@ -1012,15 +1100,28 @@ impl ClipboardListener {
     &mut self,
     tsfn: ThreadsafeFunction<ClipboardData, (), ClipboardData, napi::Status, false>,
   ) -> Result<()> {
+    listener_log!("watch_wayland setup begin");
+
     // 创建停止信号通道
     let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
 
     // 在新线程中启动 Wayland 剪贴板监听
     thread::spawn(move || {
+      listener_log!("watch_wayland thread started");
+
       // 创建 Wayland 剪贴板流
       let mut stream = match WlClipboardPasteStream::init(WlListenType::ListenOnCopy) {
-        Ok(stream) => stream,
-        Err(_) => return,
+        Ok(stream) => {
+          listener_log!("watch_wayland stream initialized");
+          stream
+        }
+        Err(e) => {
+          listener_log!(
+            "watch_wayland stream init failed: {}",
+            wayland_error_detail(&e)
+          );
+          return;
+        }
       };
 
       // 设置 MIME 类型优先级
@@ -1031,24 +1132,42 @@ impl ClipboardListener {
         "image/png".into(),
         "image/jpeg".into(),
       ]);
+      listener_log!("watch_wayland stream priority configured");
 
       // 监听剪贴板变化
       for context_result in stream.paste_stream() {
         // 检查停止信号
         if stop_rx.try_recv().is_ok() {
+          listener_log!("watch_wayland received stop signal");
           break;
         }
 
-        if let Ok(Some(message)) = context_result {
-          // 将 Wayland 剪贴板数据转换为我们的格式
-          let clipboard_data = wayland_context_to_clipboard_data(message);
-          let _ = tsfn.call(clipboard_data, ThreadsafeFunctionCallMode::NonBlocking);
+        match context_result {
+          Ok(message) => {
+            // 将 Wayland 剪贴板数据转换为我们的格式
+            let clipboard_data = wayland_context_to_clipboard_data(message);
+            let status = tsfn.call(clipboard_data, ThreadsafeFunctionCallMode::NonBlocking);
+            if status == napi::Status::Ok {
+              listener_log!("watch_wayland callback dispatched");
+            } else {
+              listener_log!("watch_wayland callback dispatch failed: status={status:?}");
+            }
+          }
+          Err(e) => {
+            listener_log!(
+              "watch_wayland stream yielded error: {}",
+              wayland_error_detail(&e)
+            );
+          }
         }
       }
+
+      listener_log!("watch_wayland loop exited");
     });
 
     // 保存停止通道
     self.listener_type = Some(ListenerType::Wayland(stop_tx));
+    listener_log!("watch_wayland setup completed");
     Ok(())
   }
 
@@ -1069,15 +1188,25 @@ impl ClipboardListener {
     &mut self,
     tsfn: ThreadsafeFunction<ClipboardData, (), ClipboardData, napi::Status, false>,
   ) -> Result<()> {
+    listener_log!("watch_generic setup begin");
+
     // 创建通道用于传递 shutdown
     let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<clipboard_rs::WatcherShutdown>();
 
     // 在新线程中启动剪贴板监听
     thread::spawn(move || {
+      listener_log!("watch_generic thread started");
+
       // 创建剪贴板上下文
       let ctx = match ClipboardContext::new() {
-        Ok(ctx) => ctx,
-        Err(_) => return,
+        Ok(ctx) => {
+          listener_log!("watch_generic clipboard context initialized");
+          ctx
+        }
+        Err(e) => {
+          listener_log!("watch_generic clipboard context init failed: {e}");
+          return;
+        }
       };
 
       // 创建处理器
@@ -1089,9 +1218,14 @@ impl ClipboardListener {
       impl ClipboardHandler for Handler {
         fn on_clipboard_change(&mut self) {
           let clipboard_data = get_clipboard_data(&self.ctx);
-          let _ = self
+          let status = self
             .callback
             .call(clipboard_data, ThreadsafeFunctionCallMode::NonBlocking);
+          if status == napi::Status::Ok {
+            listener_log!("watch_generic callback dispatched");
+          } else {
+            listener_log!("watch_generic callback dispatch failed: status={status:?}");
+          }
         }
       }
 
@@ -1102,23 +1236,41 @@ impl ClipboardListener {
 
       // 创建监听器上下文
       let mut watcher = match ClipboardWatcherContext::new() {
-        Ok(watcher) => watcher,
-        Err(_) => return,
+        Ok(watcher) => {
+          listener_log!("watch_generic watcher context initialized");
+          watcher
+        }
+        Err(e) => {
+          listener_log!("watch_generic watcher context init failed: {e}");
+          return;
+        }
       };
 
       // 添加处理器并获取关闭通道
       let shutdown = watcher.add_handler(handler).get_shutdown_channel();
+      listener_log!("watch_generic handler added");
 
       // 将 shutdown 发送给主线程
-      let _ = shutdown_tx.send(shutdown);
+      match shutdown_tx.send(shutdown) {
+        Ok(_) => listener_log!("watch_generic shutdown channel sent to main thread"),
+        Err(e) => {
+          listener_log!("watch_generic failed to send shutdown channel: {e}");
+          return;
+        }
+      }
 
       // 启动监听
+      listener_log!("watch_generic watcher started");
       watcher.start_watch();
+      listener_log!("watch_generic watcher loop exited");
     });
 
     // 接收 shutdown 并保存
     if let Ok(shutdown) = shutdown_rx.recv() {
       self.listener_type = Some(ListenerType::ClipboardRs(shutdown));
+      listener_log!("watch_generic setup completed");
+    } else {
+      listener_log!("watch_generic failed to receive shutdown channel from worker");
     }
 
     Ok(())
@@ -1130,13 +1282,19 @@ impl ClipboardListener {
     if let Some(listener_type) = self.listener_type.take() {
       match listener_type {
         ListenerType::ClipboardRs(shutdown) => {
+          listener_log!("stop called for generic listener");
           shutdown.stop();
         }
         #[cfg(target_os = "linux")]
         ListenerType::Wayland(stop_tx) => {
-          let _ = stop_tx.send(());
+          listener_log!("stop called for wayland listener");
+          if let Err(e) = stop_tx.send(()) {
+            listener_log!("failed to send wayland stop signal: {e}");
+          }
         }
       }
+    } else {
+      listener_log!("stop called but no active listener");
     }
     Ok(())
   }

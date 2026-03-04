@@ -10,14 +10,14 @@ crate-type = ["cdylib"]
 
 [dependencies]
 base64       = "0.22.1"
-clipboard-rs = "0.3.0"
+clipboard-rs = "0.3.3"
 napi         = { version = "3.0.0", features = ["async"] }
 napi-derive  = "3.0.0"
 tokio        = { version = "1.0", features = ["rt", "rt-multi-thread"] }
 
 # 仅在 Linux 平台上引入 wayland-clipboard-listener
 [target.'cfg(target_os = "linux")'.dependencies]
-wayland-clipboard-listener = "0.3.1"
+wayland-clipboard-listener = "0.6.0"
 
 [build-dependencies]
 napi-build = "2"

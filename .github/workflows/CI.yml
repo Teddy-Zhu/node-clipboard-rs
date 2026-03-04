@@ -297,12 +297,89 @@ jobs:
       - name: List packages
         run: ls -R ./npm
         shell: bash
-      - name: Publish
+      - name: Configure npm auth
         run: |
           npm config set provenance true
           echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
+      - name: Publish platform packages
+        run: |
+          echo "📦 Publishing platform packages..."
+          yarn napi prepublish -t npm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Verify platform packages on npm
+        run: |
+          node <<'EOF'
+          const { execFileSync } = require('node:child_process')
+          const { readFileSync } = require('node:fs')
+
+          const RETRIES = 12
+          const INTERVAL_MS = 5000
+          const pkg = JSON.parse(readFileSync('./package.json', 'utf8'))
+          const optionalDeps = pkg.optionalDependencies || {}
+          const entries = Object.entries(optionalDeps)
+
+          if (entries.length === 0) {
+            throw new Error('No optionalDependencies found in package.json after prepublish')
+          }
+
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+          const fetchPublishedVersion = (name, version) => {
+            try {
+              const output = execFileSync(
+                'npm',
+                ['view', `${name}@${version}`, 'version', '--json', '--registry=https://registry.npmjs.org'],
+                { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+              ).trim()
+
+              const parsed = JSON.parse(output)
+              return Array.isArray(parsed) ? parsed[parsed.length - 1] : parsed
+            } catch {
+              return null
+            }
+          }
+
+          ;(async () => {
+            const failed = []
+            for (const [name, version] of entries) {
+              let ok = false
+              for (let i = 1; i <= RETRIES; i++) {
+                const published = fetchPublishedVersion(name, version)
+                if (published === version) {
+                  console.log(`✅ ${name}@${version} is available`)
+                  ok = true
+                  break
+                }
+                console.log(`⏳ waiting ${name}@${version} (${i}/${RETRIES})`)
+                if (i < RETRIES) {
+                  await sleep(INTERVAL_MS)
+                }
+              }
+              if (!ok) {
+                failed.push(`${name}@${version}`)
+              }
+            }
+
+            if (failed.length > 0) {
+              console.error('❌ Missing platform packages on npm:')
+              for (const item of failed) {
+                console.error(`  - ${item}`)
+              }
+              process.exit(1)
+            }
+
+            console.log('✅ All platform packages are visible on npm')
+          })().catch((err) => {
+            console.error(err)
+            process.exit(1)
+          })
+          EOF
+      - name: Publish main package
+        run: |
           echo "📦 Publishing version release..."
-          npm publish --access public
+          npm publish --access public --ignore-scripts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
