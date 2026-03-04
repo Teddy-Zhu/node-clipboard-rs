@@ -12,37 +12,10 @@ use napi_derive::napi;
 use std::sync::OnceLock;
 use std::thread;
 
-// 仅在 Linux 下导入 Wayland 相关依赖
 #[cfg(target_os = "linux")]
-use wayland_clipboard_listener::{
-  ClipBoardListenMessage, WlClipboardListenerError, WlClipboardPasteStream, WlListenType,
-};
+mod wayland;
 
-/// 检测当前环境是否为 Wayland
-#[cfg(target_os = "linux")]
-fn is_wayland_environment() -> bool {
-  // 检查 WAYLAND_DISPLAY 环境变量
-  if std::env::var("WAYLAND_DISPLAY").is_ok() {
-    return true;
-  }
-
-  // 检查 XDG_SESSION_TYPE 环境变量
-  if let Ok(session_type) = std::env::var("XDG_SESSION_TYPE") {
-    if session_type == "wayland" {
-      return true;
-    }
-  }
-
-  false
-}
-
-/// 非 Linux 平台的 Wayland 环境检测（总是返回 false）
-#[cfg(not(target_os = "linux"))]
-fn is_wayland_environment() -> bool {
-  false
-}
-
-fn is_debug_logging_enabled() -> bool {
+pub(crate) fn is_debug_logging_enabled() -> bool {
   static ENABLED: OnceLock<bool> = OnceLock::new();
   *ENABLED.get_or_init(|| {
     std::env::var("CLIPBOARD_DEBUG")
@@ -67,13 +40,14 @@ macro_rules! listener_log {
 }
 
 #[cfg(target_os = "linux")]
-fn wayland_error_detail(err: &WlClipboardListenerError) -> String {
-  match err {
-    WlClipboardListenerError::InitFailed(msg) => format!("InitFailed({msg})"),
-    WlClipboardListenerError::QueueError(msg) => format!("QueueError({msg})"),
-    WlClipboardListenerError::DispatchError(msg) => format!("DispatchError({msg})"),
-    WlClipboardListenerError::PipeError => "PipeError".to_string(),
-  }
+fn is_wayland_environment() -> bool {
+  wayland::is_wayland_environment()
+}
+
+/// 非 Linux 平台的 Wayland 环境检测（总是返回 false）
+#[cfg(not(target_os = "linux"))]
+fn is_wayland_environment() -> bool {
+  false
 }
 
 /// 检测 Wayland 剪贴板监听是否可用
@@ -83,29 +57,7 @@ fn wayland_error_detail(err: &WlClipboardListenerError) -> String {
 pub fn is_wayland_clipboard_available() -> bool {
   #[cfg(target_os = "linux")]
   {
-    if !is_wayland_environment() {
-      listener_log!(
-        "is_wayland_clipboard_available=false: not in wayland env (WAYLAND_DISPLAY={:?}, XDG_SESSION_TYPE={:?})",
-        std::env::var("WAYLAND_DISPLAY").ok(),
-        std::env::var("XDG_SESSION_TYPE").ok()
-      );
-      return false;
-    }
-
-    // 尝试初始化 Wayland 剪贴板流来测试是否可用
-    match WlClipboardPasteStream::init(WlListenType::ListenOnCopy) {
-      Ok(_) => {
-        listener_log!("is_wayland_clipboard_available=true");
-        true
-      }
-      Err(e) => {
-        listener_log!(
-          "is_wayland_clipboard_available=false: init failed: {}",
-          wayland_error_detail(&e)
-        );
-        false
-      }
-    }
+    wayland::is_wayland_clipboard_available()
   }
 
   #[cfg(not(target_os = "linux"))]
@@ -873,75 +825,6 @@ pub fn clear_clipboard() -> Result<()> {
   })
 }
 
-/// 将 Wayland 剪贴板消息转换为我们的 ClipboardData 格式
-#[cfg(target_os = "linux")]
-fn wayland_context_to_clipboard_data(message: ClipBoardListenMessage) -> ClipboardData {
-  let mime_type = message.context.mime_type;
-  let payload = message.context.context;
-  let payload_len = payload.len();
-  listener_log!(
-    "wayland message received: mime_type={}, bytes={}",
-    mime_type,
-    payload_len
-  );
-
-  let mut available_formats = Vec::new();
-  let mut text = None;
-  let mut html = None;
-  let mut image = None;
-
-  // 根据 MIME 类型处理数据
-  match mime_type.as_str() {
-    "text/plain" | "text/plain;charset=utf-8" | "UTF8_STRING" | "STRING" => {
-      available_formats.push("text".to_string());
-      if let Ok(text_content) = String::from_utf8(payload) {
-        text = Some(text_content);
-      } else {
-        listener_log!("wayland text decode failed");
-      }
-    }
-    "text/html" => {
-      available_formats.push("html".to_string());
-      if let Ok(html_content) = String::from_utf8(payload) {
-        html = Some(html_content);
-      } else {
-        listener_log!("wayland html decode failed");
-      }
-    }
-    "image/png" | "image/jpeg" | "image/gif" | "image/bmp" => {
-      available_formats.push("image".to_string());
-      // 由于 Wayland 监听器不能直接获取图片尺寸，我们设置为 0
-      image = Some(ImageData {
-        width: 0,
-        height: 0,
-        size: payload_len as u32,
-        data: Buffer::from(payload),
-      });
-    }
-    _ => {
-      // 对于其他类型，尝试作为文本处理
-      if let Ok(text_content) = String::from_utf8(payload) {
-        available_formats.push("text".to_string());
-        text = Some(text_content);
-      } else {
-        listener_log!(
-          "wayland unsupported mime_type and utf8 decode failed: mime_type={}",
-          mime_type
-        );
-      }
-    }
-  }
-
-  ClipboardData {
-    available_formats,
-    text,
-    rtf: None, // Wayland 监听器暂不支持 RTF
-    html,
-    image,
-    files: None, // Wayland 监听器暂不支持文件列表
-  }
-}
-
 /// 获取完整的剪贴板数据
 fn get_clipboard_data(context: &ClipboardContext) -> ClipboardData {
   // 定义要检查的格式类型，对应 ClipboardContent 枚举
@@ -1102,68 +985,7 @@ impl ClipboardListener {
   ) -> Result<()> {
     listener_log!("watch_wayland setup begin");
 
-    // 创建停止信号通道
-    let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
-
-    // 在新线程中启动 Wayland 剪贴板监听
-    thread::spawn(move || {
-      listener_log!("watch_wayland thread started");
-
-      // 创建 Wayland 剪贴板流
-      let mut stream = match WlClipboardPasteStream::init(WlListenType::ListenOnCopy) {
-        Ok(stream) => {
-          listener_log!("watch_wayland stream initialized");
-          stream
-        }
-        Err(e) => {
-          listener_log!(
-            "watch_wayland stream init failed: {}",
-            wayland_error_detail(&e)
-          );
-          return;
-        }
-      };
-
-      // 设置 MIME 类型优先级
-      stream.set_priority(vec![
-        "text/plain;charset=utf-8".into(),
-        "text/plain".into(),
-        "text/html".into(),
-        "image/png".into(),
-        "image/jpeg".into(),
-      ]);
-      listener_log!("watch_wayland stream priority configured");
-
-      // 监听剪贴板变化
-      for context_result in stream.paste_stream() {
-        // 检查停止信号
-        if stop_rx.try_recv().is_ok() {
-          listener_log!("watch_wayland received stop signal");
-          break;
-        }
-
-        match context_result {
-          Ok(message) => {
-            // 将 Wayland 剪贴板数据转换为我们的格式
-            let clipboard_data = wayland_context_to_clipboard_data(message);
-            let status = tsfn.call(clipboard_data, ThreadsafeFunctionCallMode::NonBlocking);
-            if status == napi::Status::Ok {
-              listener_log!("watch_wayland callback dispatched");
-            } else {
-              listener_log!("watch_wayland callback dispatch failed: status={status:?}");
-            }
-          }
-          Err(e) => {
-            listener_log!(
-              "watch_wayland stream yielded error: {}",
-              wayland_error_detail(&e)
-            );
-          }
-        }
-      }
-
-      listener_log!("watch_wayland loop exited");
-    });
+    let stop_tx = wayland::start_wayland_watch(tsfn);
 
     // 保存停止通道
     self.listener_type = Some(ListenerType::Wayland(stop_tx));
