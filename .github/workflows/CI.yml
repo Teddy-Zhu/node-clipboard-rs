@@ -3,6 +3,9 @@ env:
   DEBUG: napi:*
   APP_NAME: clipboard
   MACOSX_DEPLOYMENT_TARGET: '10.13'
+  RUST_TOOLCHAIN: '1.99.1'
+  NPM_VERSION: '12.2.0'
+  ZERO_AR_DATE: '1'
 permissions:
   contents: read
 'on':
@@ -34,6 +37,7 @@ jobs:
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: clippy, rustfmt
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
@@ -47,17 +51,17 @@ jobs:
         settings:
           - host: macos-15-intel
             target: x86_64-apple-darwin
-          - host: windows-latest
+          - host: windows-2025
             target: x86_64-pc-windows-msvc
           - host: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             cross: --use-napi-cross
-          - host: macos-latest
+          - host: macos-15
             target: aarch64-apple-darwin
           - host: ubuntu-22.04
             target: aarch64-unknown-linux-gnu
             cross: --use-napi-cross
-          - host: windows-latest
+          - host: windows-2025
             target: aarch64-pc-windows-msvc
     name: Build ${{ matrix.settings.target }}
     runs-on: ${{ matrix.settings.host }}
@@ -70,6 +74,7 @@ jobs:
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: ${{ matrix.settings.target }}
       - uses: actions/cache@v4
         with:
@@ -79,7 +84,7 @@ jobs:
             ~/.cargo/git/db/
             ~/.napi-rs
             target/
-          key: ${{ matrix.settings.host }}-${{ matrix.settings.target }}-cargo-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
+          key: ${{ matrix.settings.host }}-${{ matrix.settings.target }}-cargo-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml') }}
       - run: pnpm install --frozen-lockfile
       - name: Build
         run: pnpm build --target ${{ matrix.settings.target }} ${{ matrix.settings.cross }} -- --locked
@@ -116,6 +121,8 @@ jobs:
         with:
           pattern: bindings-*
           path: artifacts
+      - name: Install pinned npm for packing
+        run: npm install --global npm@"$NPM_VERSION" --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
       - name: Prepare and pack all platform packages
         run: |
           pnpm artifacts
@@ -139,13 +146,13 @@ jobs:
       fail-fast: false
       matrix:
         settings:
-          - host: windows-latest
+          - host: windows-2025
             target: x86_64-pc-windows-msvc
             architecture: x64
           - host: windows-11-arm
             target: aarch64-pc-windows-msvc
             architecture: arm64
-          - host: macos-latest
+          - host: macos-15
             target: aarch64-apple-darwin
             architecture: arm64
           - host: macos-15-intel
@@ -236,7 +243,7 @@ jobs:
       - name: Install npm for trusted publishing
         if: inputs.publish
         run: |
-          npm install --global npm@12 --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          npm install --global npm@"$NPM_VERSION" --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
           npm --version
       - name: Download tested release packages
         uses: actions/download-artifact@v4

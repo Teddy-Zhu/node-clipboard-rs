@@ -44,6 +44,10 @@ Example local loop: `yarn lint && yarn test && yarn build:debug`.
 - CI runs only through **Actions → CI → Run workflow**; commits and pull requests do not start it automatically.
   Manual runs build and test by default. To publish, select `main` and enable `publish` (npm) or `github_release`;
   both default to false, and publishing starts only after all checks pass.
+- Set release versions in `package.json`; release preparation synchronizes generated platform packages and dependencies.
+  Keep repository optional dependencies on published versions so frozen installs work before the new release is published.
+  CI pins Rust and npm and enables deterministic MSVC linking. Keep integrity checks; compiler, SDK, or runner image
+  upgrades can still change binary contents and require a new version rather than overwriting an existing release.
 - npm publishing uses GitHub OIDC Trusted Publishing. Configure all seven npm packages to trust GitHub owner `Teddy-Zhu`,
   repository `node-clipboard-rs`, workflow filename `CI.yml`, with no environment name, and allow `npm publish`.
   The workflow uses npm 12 and does not require an `NPM_TOKEN` secret; provenance is generated automatically.

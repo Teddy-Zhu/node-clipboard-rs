@@ -1,5 +1,20 @@
+# Use content-derived PE timestamps and disable incremental MSVC linking.
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = [
+  "-C",
+  "target-feature=+crt-static",
+  "-C",
+  "link-arg=/Brepro",
+  "-C",
+  "link-arg=/INCREMENTAL:NO",
+]
 
 [target.aarch64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = [
+  "-C",
+  "target-feature=+crt-static",
+  "-C",
+  "link-arg=/Brepro",
+  "-C",
+  "link-arg=/INCREMENTAL:NO",
+]
