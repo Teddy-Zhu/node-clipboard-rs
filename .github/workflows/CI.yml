@@ -29,6 +29,9 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    outputs:
+      publish_npm: ${{ steps.release.outputs.publish_npm }}
+      publish_github: ${{ steps.release.outputs.publish_github }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -36,6 +39,9 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - name: Determine release targets
+        id: release
+        run: node scripts/release-targets.cjs
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -136,6 +142,9 @@ jobs:
   test-macOS-windows-binding:
     name: Test ${{ matrix.settings.target }} - node@${{ matrix.node }}
     needs: package
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
@@ -226,7 +235,7 @@ jobs:
       - lint
       - test-macOS-windows-binding
       - test-linux-binding
-    if: github.event_name == 'workflow_dispatch' && (inputs.publish || inputs.github_release) && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (needs.lint.outputs.publish_npm == 'true' || needs.lint.outputs.publish_github == 'true')
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -239,20 +248,20 @@ jobs:
           name: release-packages
           path: packages
       - name: Configure npm provenance
-        if: inputs.publish
+        if: needs.lint.outputs.publish_npm == 'true'
         run: npm config set provenance true
       - name: Publish platform packages
-        if: inputs.publish
+        if: needs.lint.outputs.publish_npm == 'true'
         run: node scripts/publish-packages.cjs platforms
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish main package
-        if: inputs.publish
+        if: needs.lint.outputs.publish_npm == 'true'
         run: node scripts/publish-packages.cjs main
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish GitHub Release
-        if: inputs.github_release
+        if: needs.lint.outputs.publish_github == 'true'
         run: node scripts/github-release.cjs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

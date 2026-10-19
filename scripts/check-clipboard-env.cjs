@@ -20,17 +20,20 @@ if (process.platform === 'linux') {
   run('/usr/bin/pbcopy', [], { input: probe })
   assert.equal(run('/usr/bin/pbpaste', []), probe, 'macOS pasteboard is not accessible in this session')
 } else if (process.platform === 'win32') {
-  run(
-    'pwsh',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-STA',
-      '-Command',
-      "$ErrorActionPreference = 'Stop'; Set-Clipboard -Value $env:CLIPBOARD_PROBE; if ((Get-Clipboard -Raw) -cne $env:CLIPBOARD_PROBE) { throw 'Windows clipboard is not accessible in this session' }",
-    ],
-    { env: { ...process.env, CLIPBOARD_PROBE: probe } },
-  )
+  const bindingPath = require.resolve(process.env.CLIPBOARD_TEST_PACKAGE || '../index')
+  // Probe Win32 through the tested binding without starting PowerShell's CLR.
+  run(process.execPath, [
+    '-e',
+    `
+        const assert = require('node:assert/strict')
+        const { ClipboardManager } = require(process.argv[1])
+        const clipboard = new ClipboardManager()
+        clipboard.setText(process.argv[2])
+        assert.equal(clipboard.getText(), process.argv[2], 'Windows clipboard is not accessible in this session')
+      `,
+    bindingPath,
+    probe,
+  ])
 } else {
   throw new Error(`No clipboard CI environment configured for ${process.platform}`)
 }

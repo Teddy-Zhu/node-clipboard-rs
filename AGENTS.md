@@ -41,7 +41,9 @@ Example local loop: `yarn lint && yarn test && yarn build:debug`.
 ## Commit & Pull Request Guidelines
 
 - Commit messages in history are short and imperative (`fix test`, `support workflow_dispatch`).
-- Release commits are version-only (`v0.0.6`); publishing requires a manual workflow run on `main` with `publish` (npm) or `github_release` enabled. Both default to false.
+- Release commit subjects are `v<package.json version>` (for example, `v0.0.12` or `v0.0.12-beta.1`).
+  Pushing one to `main` publishes npm packages and a GitHub Release after all checks pass; a version mismatch fails the check.
+  Other commits only build and test. Manual runs on `main` can enable `publish` (npm) or `github_release`; both default to false.
 - PR checklist:
 
 1. Explain what changed and why.
