@@ -3,63 +3,85 @@ const { execFileSync } = require('node:child_process')
 const { resolve } = require('node:path')
 const { loadRelease } = require('./release-manifest.cjs')
 
+const registry = 'https://registry.npmjs.org'
 const release = loadRelease()
 const mode = process.argv[2]
 assert.ok(mode === 'platforms' || mode === 'main', 'Expected platforms or main')
 const entries = release.packages.filter((entry) => (entry.name === release.name) === (mode === 'main'))
 
 function npm(args) {
-  return execFileSync('npm', [...args, '--registry=https://registry.npmjs.org'], {
+  return execFileSync('npm', [...args, `--registry=${registry}`], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim()
 }
 
-function publishedIntegrity(entry) {
-  try {
-    return JSON.parse(npm(['view', `${entry.name}@${entry.version}`, 'dist.integrity', '--json']))
-  } catch (error) {
-    let code
-    try {
-      code = JSON.parse(String(error.stdout)).error?.code
-    } catch {
-      /* Non-JSON errors retain their original diagnostics. */
-    }
-    if (code === 'E404') return null
-    throw error
+async function publishedIntegrity(entry) {
+  const spec = `${entry.name}@${entry.version}`
+  const url = new URL(`${registry}/${encodeURIComponent(entry.name)}/${encodeURIComponent(entry.version)}`)
+  // Avoid stale package metadata and cached 404s immediately after publishing.
+  url.searchParams.set('cacheBust', Date.now().toString())
+  const response = await fetch(url, {
+    headers: { accept: 'application/json', 'cache-control': 'no-cache' },
+    cache: 'no-store',
+    signal: AbortSignal.timeout(15000),
+  })
+  if (!response.ok) {
+    await response.body?.cancel()
+    if (response.status === 404) return null
+    throw new Error(`Registry lookup failed for ${spec}: HTTP ${response.status}`)
   }
+  const metadata = await response.json()
+  assert.equal(metadata.name, entry.name, `Registry package name mismatch: ${spec}`)
+  assert.equal(metadata.version, entry.version, `Registry version mismatch: ${spec}`)
+  assert.equal(typeof metadata.dist?.integrity, 'string', `Missing registry integrity: ${spec}`)
+  return metadata.dist.integrity
+}
+
+async function alreadyPublished(entry) {
+  const spec = `${entry.name}@${entry.version}`
+  const integrity = await publishedIntegrity(entry)
+  if (integrity === null) return false
+  assert.equal(
+    integrity,
+    entry.integrity,
+    `Published contents differ: ${spec}. Use a new version for changed contents.`,
+  )
+  console.log(`Already published with matching integrity: ${spec}`)
+  return true
 }
 
 async function publish() {
   for (const entry of entries) {
-    const existing = publishedIntegrity(entry)
-    if (existing !== null) {
-      assert.equal(existing, entry.integrity, `Published contents differ: ${entry.name}@${entry.version}`)
-      console.log(`Already published with matching integrity: ${entry.name}@${entry.version}`)
-      continue
-    }
-    console.log(
-      npm([
-        'publish',
-        resolve(release.directory, entry.filename),
-        '--ignore-scripts',
-        '--access',
-        'public',
-        '--tag',
-        release.version.includes('-') ? 'next' : 'latest',
-      ]),
-    )
-    let available = false
-    for (let attempt = 0; attempt < 12; attempt++) {
-      const integrity = publishedIntegrity(entry)
-      if (integrity !== null) {
-        assert.equal(integrity, entry.integrity, `Registry integrity mismatch: ${entry.name}`)
-        available = true
-        break
+    if (await alreadyPublished(entry)) continue
+    // A successful publish is authoritative; registry reads can lag behind writes.
+    try {
+      console.log(
+        npm([
+          'publish',
+          resolve(release.directory, entry.filename),
+          '--ignore-scripts',
+          '--access',
+          'public',
+          '--tag',
+          release.version.includes('-') ? 'next' : 'latest',
+        ]),
+      )
+    } catch (publishError) {
+      // Another run, or a lost publish response, may leave this version already published.
+      try {
+        if (await alreadyPublished(entry)) {
+          console.warn(`npm publish returned an error; matching published contents were verified: ${entry.name}`)
+          continue
+        }
+      } catch (registryError) {
+        throw new AggregateError(
+          [publishError, registryError],
+          `Failed to publish or verify ${entry.name}@${entry.version}`,
+        )
       }
-      if (attempt < 11) await new Promise((resolve) => setTimeout(resolve, 5000))
+      throw publishError
     }
-    assert.ok(available, `Published package is not visible: ${entry.name}@${entry.version}`)
   }
 }
 

@@ -1,5 +1,7 @@
 const assert = require('node:assert/strict')
 const { execFileSync } = require('node:child_process')
+const { createHash } = require('node:crypto')
+const { readFileSync } = require('node:fs')
 const { join } = require('node:path')
 const { loadRelease } = require('./release-manifest.cjs')
 
@@ -35,49 +37,68 @@ function getRelease() {
   }
 }
 
-checkTag()
-let existing = getRelease()
-if (!existing) {
-  const options = release.version.includes('-') ? ['--prerelease'] : []
-  gh([
-    'release',
-    'create',
-    tag,
-    '--repo',
-    process.env.GITHUB_REPOSITORY,
-    '--target',
-    release.commit,
-    '--title',
-    tag,
-    '--draft',
-    '--generate-notes',
-    ...options,
-  ])
-  existing = getRelease()
-}
-assert.ok(existing?.isDraft, `${tag} is already published; published assets will not be replaced`)
-// GitHub may defer creating a draft release's tag until publication.
-if (!checkTag()) assert.equal(existing.targetCommitish, release.commit, 'Draft release targets another commit')
 const assets = [
   ...release.packages.map((entry) => entry.filename),
   ...release.binaries.map((entry) => entry.filename),
   'manifest.json',
   'SHA256SUMS',
 ]
-gh([
-  'release',
-  'upload',
-  tag,
-  ...assets.map((filename) => join(release.directory, filename)),
-  '--repo',
-  process.env.GITHUB_REPOSITORY,
-  '--clobber',
-])
-const uploaded = getRelease()
-assert.deepEqual(
-  new Set(uploaded.assets.map((asset) => asset.name)),
-  new Set(assets),
-  'GitHub release assets are incomplete',
-)
-gh(['release', 'edit', tag, '--repo', process.env.GITHUB_REPOSITORY, '--draft=false'])
-console.log(`GitHub Release published: ${tag}`)
+const commit = checkTag()
+let existing = getRelease()
+if (existing?.isDraft === false) {
+  assert.ok(commit, `${tag} is published but its tag is missing`)
+  const published = get(`releases/tags/${tag}`)
+  assert.ok(published && published.draft === false, `Published release is unavailable: ${tag}`)
+  assert.deepEqual(
+    new Set(published.assets.map((asset) => asset.name)),
+    new Set(assets),
+    'Published GitHub release assets are incomplete',
+  )
+  for (const asset of published.assets) {
+    assert.equal(asset.state, 'uploaded', `Published asset upload is incomplete: ${asset.name}`)
+    const digest = createHash('sha256')
+      .update(readFileSync(join(release.directory, asset.name)))
+      .digest('hex')
+    assert.equal(asset.digest, `sha256:${digest}`, `Published asset contents differ: ${asset.name}`)
+  }
+  console.log(`GitHub Release already published with matching artifacts: ${tag}`)
+} else {
+  if (!existing) {
+    const options = release.version.includes('-') ? ['--prerelease'] : []
+    gh([
+      'release',
+      'create',
+      tag,
+      '--repo',
+      process.env.GITHUB_REPOSITORY,
+      '--target',
+      release.commit,
+      '--title',
+      tag,
+      '--draft',
+      '--generate-notes',
+      ...options,
+    ])
+    existing = getRelease()
+  }
+  assert.ok(existing?.isDraft, `Expected a draft release: ${tag}`)
+  // GitHub may defer creating a draft release's tag until publication.
+  if (!checkTag()) assert.equal(existing.targetCommitish, release.commit, 'Draft release targets another commit')
+  gh([
+    'release',
+    'upload',
+    tag,
+    ...assets.map((filename) => join(release.directory, filename)),
+    '--repo',
+    process.env.GITHUB_REPOSITORY,
+    '--clobber',
+  ])
+  const uploaded = getRelease()
+  assert.deepEqual(
+    new Set(uploaded.assets.map((asset) => asset.name)),
+    new Set(assets),
+    'GitHub release assets are incomplete',
+  )
+  gh(['release', 'edit', tag, '--repo', process.env.GITHUB_REPOSITORY, '--draft=false'])
+  console.log(`GitHub Release published: ${tag}`)
+}
