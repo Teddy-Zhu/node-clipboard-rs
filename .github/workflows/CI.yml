@@ -238,28 +238,27 @@ jobs:
     if: github.ref == 'refs/heads/main' && (needs.lint.outputs.publish_npm == 'true' || needs.lint.outputs.publish_github == 'true')
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
-          registry-url: 'https://registry.npmjs.org'
+          check-latest: true
+          package-manager-cache: false
+      - name: Install npm for trusted publishing
+        if: needs.lint.outputs.publish_npm == 'true'
+        run: |
+          npm install --global npm@12 --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
+          npm --version
       - name: Download tested release packages
         uses: actions/download-artifact@v4
         with:
           name: release-packages
           path: packages
-      - name: Configure npm provenance
-        if: needs.lint.outputs.publish_npm == 'true'
-        run: npm config set provenance true
       - name: Publish platform packages
         if: needs.lint.outputs.publish_npm == 'true'
         run: node scripts/publish-packages.cjs platforms
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish main package
         if: needs.lint.outputs.publish_npm == 'true'
         run: node scripts/publish-packages.cjs main
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish GitHub Release
         if: needs.lint.outputs.publish_github == 'true'
         run: node scripts/github-release.cjs
