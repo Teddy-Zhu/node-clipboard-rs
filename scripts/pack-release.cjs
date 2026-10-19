@@ -47,13 +47,21 @@ writeFileSync(join(directory, 'SHA256SUMS'), `${checksums.join('\n')}\n`)
 console.log(`Packed ${manifest.packages.length} npm packages and ${manifest.binaries.length} native binaries`)
 
 function pack(source, binary) {
-  const [result] = JSON.parse(
+  const metadata = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'))
+  const output = JSON.parse(
     execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', directory], {
       cwd: source,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'inherit'],
     }),
   )
+  // npm 11 returns an array; npm 12 returns an object keyed by package name.
+  const results = Array.isArray(output) ? output : Object.values(output ?? {})
+  assert.equal(results.length, 1, `Expected one npm pack result: ${metadata.name}`)
+  const [result] = results
+  assert.equal(result?.name, metadata.name, `Packed package name mismatch: ${metadata.name}`)
+  assert.equal(result.version, metadata.version, `Packed package version mismatch: ${metadata.name}`)
+  assert.ok(Array.isArray(result.files), `Missing npm pack file list: ${metadata.name}`)
   const files = result.files.map((file) => file.path)
   if (binary) {
     assert.deepEqual(
