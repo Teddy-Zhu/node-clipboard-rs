@@ -64,20 +64,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
-name = "clipboard"
-version = "0.1.0"
-dependencies = [
- "base64",
- "clipboard-rs",
- "napi",
- "napi-build",
- "napi-derive",
- "tokio",
- "url",
- "wl-clipboard-rs",
-]
-
-[[package]]
 name = "clipboard-rs"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -616,6 +602,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e22a4f25c16a5c5411d987cd6fbd48313522ae1789ade2d6dd3efdc6d40a0fc8"
 dependencies = [
  "libloading",
+]
+
+[[package]]
+name = "node-clipboard-rs"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "clipboard-rs",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "tokio",
+ "url",
+ "wl-clipboard-rs",
 ]
 
 [[package]]

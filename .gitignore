@@ -127,5 +127,6 @@ dist
 !.yarn/sdks
 !.yarn/versions
 /npm
+/packages
 
 .DS_Store

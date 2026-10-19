@@ -548,7 +548,7 @@ impl ClipboardManager {
         return Err(Error::new(
           Status::InvalidArg,
           format!("Unsupported format: {format}"),
-        ))
+        ));
       }
     };
 

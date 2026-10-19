@@ -1,10 +1,10 @@
-use crate::{files, ClipboardContents, ClipboardData, ImageData, ListenerState};
+use crate::{ClipboardContents, ClipboardData, ImageData, ListenerState, files};
 use clipboard_rs::common::{RustImage, RustImageData};
 use napi::bindgen_prelude::Buffer;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::thread;
 use wl_clipboard_rs::copy::{
   self, ClipboardType as CopyClipboardType, Error as CopyError, MimeSource as CopyMimeSource,
@@ -34,10 +34,10 @@ pub(crate) fn is_wayland_environment() -> bool {
     return true;
   }
 
-  if let Ok(session_type) = std::env::var("XDG_SESSION_TYPE") {
-    if session_type == "wayland" {
-      return true;
-    }
+  if let Ok(session_type) = std::env::var("XDG_SESSION_TYPE")
+    && session_type == "wayland"
+  {
+    return true;
   }
 
   false

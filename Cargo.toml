@@ -1,8 +1,8 @@
 
 [package]
-authors      = ["LongYinan <lynweklm@gmail.com>"]
-edition      = "2021"
-name         = "clipboard"
+authors      = ["teddyzhu15 <teddyzhu15@gmail.com>"]
+edition      = "2024"
+name         = "node-clipboard-rs"
 publish      = false
 rust-version = "1.88"
 version      = "0.1.0"

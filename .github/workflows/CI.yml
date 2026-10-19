@@ -17,6 +17,11 @@ permissions:
         required: false
         default: false
         type: boolean
+      github_release:
+        description: 'Publish GitHub Release'
+        required: false
+        default: false
+        type: boolean
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -29,7 +34,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -65,7 +70,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -98,9 +103,39 @@ jobs:
             index.d.ts
           if-no-files-found: error
 
+  package:
+    name: Package release artifacts
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec napi create-npm-dirs
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bindings-*
+          path: artifacts
+      - name: Prepare and pack all platform packages
+        run: |
+          pnpm artifacts
+          cp artifacts/bindings-js/index.js artifacts/bindings-js/index.d.ts .
+          pnpm exec napi pre-publish -t npm --skip-optional-publish --no-gh-release
+          node scripts/check-release.cjs
+          node scripts/pack-release.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-packages
+          path: packages/*
+          if-no-files-found: error
+
   test-macOS-windows-binding:
     name: Test ${{ matrix.settings.target }} - node@${{ matrix.node }}
-    needs: build
+    needs: package
     strategy:
       fail-fast: false
       matrix:
@@ -117,7 +152,7 @@ jobs:
           - host: macos-15-intel
             target: x86_64-apple-darwin
             architecture: x64
-        node: ['20', '22', '24']
+        node: ['24']
     runs-on: ${{ matrix.settings.host }}
     steps:
       - uses: actions/checkout@v4
@@ -130,29 +165,32 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@v4
         with:
-          name: bindings-${{ matrix.settings.target }}
-          path: .
-      - uses: actions/download-artifact@v4
-        with:
-          name: bindings-js
-          path: .
+          name: release-packages
+          path: packages
+      - name: Install and verify packed binding
+        run: node scripts/install-test-package.cjs
       - name: Check system clipboard access
         run: node scripts/check-clipboard-env.cjs
       - run: pnpm test
 
   test-linux-binding:
-    name: Test ${{ matrix.settings.target }} - node@${{ matrix.node }}
-    needs: build
+    name: Test ${{ matrix.target }} - node@${{ matrix.node }}
+    needs: package
     strategy:
       fail-fast: false
       matrix:
-        settings:
+        include:
           - host: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            node: '24'
           - host: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
-        node: ['20', '22', '24']
-    runs-on: ${{ matrix.settings.host }}
+            node: '24'
+          # Reuse the same Node-API binary for a lower-version compatibility check.
+          - host: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            node: '22'
+    runs-on: ${{ matrix.host }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -165,12 +203,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y xvfb xauth x11-utils
       - uses: actions/download-artifact@v4
         with:
-          name: bindings-${{ matrix.settings.target }}
-          path: .
-      - uses: actions/download-artifact@v4
-        with:
-          name: bindings-js
-          path: .
+          name: release-packages
+          path: packages
+      - name: Install and verify packed binding
+        run: node scripts/install-test-package.cjs
       - name: Test bindings
         run: >-
           xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24 -nolisten tcp'
@@ -190,104 +226,33 @@ jobs:
       - lint
       - test-macOS-windows-binding
       - test-linux-binding
-    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && (inputs.publish || inputs.github_release) && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: pnpm
+          node-version: 24
           registry-url: 'https://registry.npmjs.org'
-      - run: pnpm install --frozen-lockfile
-      - name: Create npm directories
-        run: pnpm exec napi create-npm-dirs
-      - name: Download all artifacts
+      - name: Download tested release packages
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
-      - name: Collect bindings and generated entry points
-        run: |
-          pnpm artifacts
-          cp artifacts/bindings-js/index.js artifacts/bindings-js/index.d.ts .
-          pnpm exec napi pre-publish -t npm --skip-optional-publish --no-gh-release
-          node scripts/check-release.cjs
+          name: release-packages
+          path: packages
       - name: Configure npm provenance
+        if: inputs.publish
         run: npm config set provenance true
       - name: Publish platform packages
-        run: pnpm exec napi pre-publish -t npm
+        if: inputs.publish
+        run: node scripts/publish-packages.cjs platforms
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Verify platform packages on npm
-        run: |
-          node <<'EOF'
-          const { execFileSync } = require('node:child_process')
-          const { readFileSync } = require('node:fs')
-
-          const RETRIES = 12
-          const INTERVAL_MS = 5000
-          const pkg = JSON.parse(readFileSync('./package.json', 'utf8'))
-          const optionalDeps = pkg.optionalDependencies || {}
-          const entries = Object.entries(optionalDeps)
-
-          if (entries.length === 0) {
-            throw new Error('No optionalDependencies found in package.json after prepublish')
-          }
-
-          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-
-          const fetchPublishedVersion = (name, version) => {
-            try {
-              const output = execFileSync(
-                'npm',
-                ['view', `${name}@${version}`, 'version', '--json', '--registry=https://registry.npmjs.org'],
-                { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-              ).trim()
-
-              const parsed = JSON.parse(output)
-              return Array.isArray(parsed) ? parsed[parsed.length - 1] : parsed
-            } catch {
-              return null
-            }
-          }
-
-          ;(async () => {
-            const failed = []
-            for (const [name, version] of entries) {
-              let ok = false
-              for (let i = 1; i <= RETRIES; i++) {
-                const published = fetchPublishedVersion(name, version)
-                if (published === version) {
-                  console.log(`✅ ${name}@${version} is available`)
-                  ok = true
-                  break
-                }
-                console.log(`⏳ waiting ${name}@${version} (${i}/${RETRIES})`)
-                if (i < RETRIES) {
-                  await sleep(INTERVAL_MS)
-                }
-              }
-              if (!ok) {
-                failed.push(`${name}@${version}`)
-              }
-            }
-
-            if (failed.length > 0) {
-              console.error('❌ Missing platform packages on npm:')
-              for (const item of failed) {
-                console.error(`  - ${item}`)
-              }
-              process.exit(1)
-            }
-
-            console.log('✅ All platform packages are visible on npm')
-          })().catch((err) => {
-            console.error(err)
-            process.exit(1)
-          })
-          EOF
       - name: Publish main package
-        run: npm publish --access public --ignore-scripts
+        if: inputs.publish
+        run: node scripts/publish-packages.cjs main
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish GitHub Release
+        if: inputs.github_release
+        run: node scripts/github-release.cjs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -5,7 +5,10 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import {
+
+const require = createRequire(import.meta.url)
+const bindingPath = require.resolve(process.env.CLIPBOARD_TEST_PACKAGE || '../index')
+const {
   ClipboardManager,
   getClipboardText,
   setClipboardText,
@@ -14,9 +17,7 @@ import {
   setClipboardFiles,
   getFullClipboardData,
   setClipboardContents,
-} from '../index'
-
-const require = createRequire(import.meta.url)
+} = require(bindingPath) as typeof import('../index')
 
 // 测试数据
 const TEST_TEXT = 'Hello, World!'
@@ -141,7 +142,7 @@ test.serial('ClipboardListener - 空闲时停止和重启后进程正常退出',
       assert.equal(listener.isWatching(), false)
     }
   `,
-      require.resolve('../index'),
+      bindingPath,
     ],
     { timeout: 10000, encoding: 'utf8' },
   )
@@ -164,7 +165,7 @@ if (process.platform === 'linux') {
         assert.equal(listener.isWatching(), false)
         listener.stop()
       `,
-          require.resolve('../index'),
+          bindingPath,
         ],
         {
           timeout: 10000,

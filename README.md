@@ -1,6 +1,11 @@
 # @teddyzhu/clipboard
 
 [![CI](https://github.com/Teddy-Zhu/node-clipboard-rs/actions/workflows/CI.yml/badge.svg)](https://github.com/Teddy-Zhu/node-clipboard-rs/actions/workflows/CI.yml)
+[![npm version](https://img.shields.io/npm/v/%40teddyzhu%2Fclipboard)](https://www.npmjs.com/package/@teddyzhu/clipboard)
+[![npm downloads](https://img.shields.io/npm/dm/%40teddyzhu%2Fclipboard)](https://www.npmjs.com/package/@teddyzhu/clipboard)
+[![GitHub Release](https://img.shields.io/github/v/release/Teddy-Zhu/node-clipboard-rs)](https://github.com/Teddy-Zhu/node-clipboard-rs/releases/latest)
+[![License](https://img.shields.io/github/license/Teddy-Zhu/node-clipboard-rs)](./LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/Teddy-Zhu/node-clipboard-rs?style=social)](https://github.com/Teddy-Zhu/node-clipboard-rs/stargazers)
 
 English | [简体中文](./README.zh-CN.md)
 
@@ -24,8 +29,12 @@ npm install @teddyzhu/clipboard
 | macOS          | x64, arm64             | Access to the system pasteboard                |
 | Linux (glibc)  | x64, arm64             | X11 display, or a supported Wayland compositor |
 
-CI runs on Node.js 20, 22, and 24. The `engines.node` range retains Node-API 4 compatibility;
-older Node.js versions are outside the CI test matrix. Linux musl binaries are not provided.
+CI runs the full clipboard test suite on Node.js 24 for all six platform/architecture targets,
+plus a Node.js 22 compatibility run on Linux x64 using the same prebuilt binding.
+These tests install the packed main package and its matching native package into an isolated directory,
+enforce package version consistency, and exercise the installed public API.
+The `engines.node` range retains Node-API 4 compatibility; other Node.js/platform combinations are not directly tested in CI.
+Linux musl binaries are not provided.
 
 On Linux, a nonempty `WAYLAND_DISPLAY` or `XDG_SESSION_TYPE=wayland` selects Wayland.
 The compositor must expose `ext-data-control` or `wlr-data-control`; a Wayland session alone does not guarantee support.
@@ -177,10 +186,39 @@ Scripts in `tests/` are supplementary manual scenarios.
 
 Pushes and pull requests build and validate all six targets; they never publish, including commits named `vX.Y.Z`.
 Manual workflow runs also default to build and validation only.
-To release, prepare a new package version and its lockfiles, then run **Actions → CI → Run workflow** on `main`
-and explicitly enable **Publish release to npm**. All builds, checks, and clipboard tests must pass before publishing.
-The publish job validates every platform binary, publishes platform packages first, verifies their registry versions,
-then publishes the main package. It requires an `NPM_TOKEN` secret with publish access.
+To release:
+
+1. Update the main version in `package.json` and commit it to `main`. Platform package versions and optional dependency
+   versions are synchronized during packaging; do not point the source lockfile at unpublished platform versions.
+   The unpublished Rust crate version is independent of the npm package version.
+2. Open [Actions → CI → Run workflow](https://github.com/Teddy-Zhu/node-clipboard-rs/actions/workflows/CI.yml) and select `main`.
+3. Enable **Publish GitHub Release**, **Publish release to npm**, or both. Both options default to off.
+
+All six builds, checks, and installed-package clipboard tests must pass before publishing.
+The GitHub option creates `v<package.json version>` at the workflow's exact commit, generates release notes, and uploads
+six native `.node` binaries, seven npm `.tgz` packages, `manifest.json`, and `SHA256SUMS`.
+The release stays a draft until every asset has uploaded successfully. An existing tag pointing to another commit blocks
+publication; a failed draft upload can be retried. Published GitHub releases are not overwritten.
+GitHub-only releases use the workflow's `GITHUB_TOKEN`; no `NPM_TOKEN` is required. Repository Actions must allow write
+access to releases. If immutable releases are enabled, allow the workflow to create the version tag.
+
+The npm option requires an `NPM_TOKEN` secret with publish access to all seven packages and npm provenance enabled by CI.
+It publishes the exact tested tarballs: platform packages first, then the main package after registry integrity checks.
+Matching existing package versions can be resumed; differing contents at an existing version fail explicitly.
+Prerelease versions use the npm `next` tag and GitHub's prerelease flag. When both options are enabled, npm publishes first.
+For GitHub-only distribution, install the main tarball together with the matching platform tarball so npm can resolve
+the native dependency without a corresponding npm release.
+
+## Acknowledgements
+
+Thanks to the maintainers and contributors of the open source projects that make this package possible:
+
+- [clipboard-rs](https://github.com/ChurchTao/clipboard-rs): native desktop clipboard access and change notifications.
+- [wl-clipboard-rs](https://github.com/YaLTeR/wl-clipboard-rs): Wayland clipboard access and monitoring.
+- [napi-rs](https://github.com/napi-rs/napi-rs): Rust bindings for Node-API, TypeScript declarations, and native package tooling.
+- [Tokio](https://github.com/tokio-rs/tokio): async runtime integration.
+- [rust-url](https://github.com/servo/rust-url) and [rust-base64](https://github.com/marshallpierce/rust-base64): file URL handling and Base64 encoding.
+- [AVA](https://github.com/avajs/ava): public API and clipboard integration tests.
 
 ## License
 

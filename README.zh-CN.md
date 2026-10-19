@@ -1,6 +1,11 @@
 # @teddyzhu/clipboard
 
 [![CI](https://github.com/Teddy-Zhu/node-clipboard-rs/actions/workflows/CI.yml/badge.svg)](https://github.com/Teddy-Zhu/node-clipboard-rs/actions/workflows/CI.yml)
+[![npm 版本](https://img.shields.io/npm/v/%40teddyzhu%2Fclipboard)](https://www.npmjs.com/package/@teddyzhu/clipboard)
+[![npm 下载量](https://img.shields.io/npm/dm/%40teddyzhu%2Fclipboard)](https://www.npmjs.com/package/@teddyzhu/clipboard)
+[![GitHub Release](https://img.shields.io/github/v/release/Teddy-Zhu/node-clipboard-rs)](https://github.com/Teddy-Zhu/node-clipboard-rs/releases/latest)
+[![许可证](https://img.shields.io/github/license/Teddy-Zhu/node-clipboard-rs)](./LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/Teddy-Zhu/node-clipboard-rs?style=social)](https://github.com/Teddy-Zhu/node-clipboard-rs/stargazers)
 
 [English](./README.md) | 简体中文
 
@@ -24,8 +29,11 @@ npm install @teddyzhu/clipboard
 | macOS           | x64、arm64 | 可以访问系统粘贴板                    |
 | Linux（glibc）  | x64、arm64 | X11 显示服务或受支持的 Wayland 合成器 |
 
-CI 使用 Node.js 20、22、24。`engines.node` 保留 Node-API 4 的兼容范围，
-更早的 Node.js 版本不在 CI 测试矩阵内。目前不提供 Linux musl 预编译包。
+CI 在 Node.js 24 下对全部六个平台与架构组合执行完整剪贴板测试，
+并在 Linux x64 上复用同一预编译绑定，额外执行 Node.js 22 兼容性测试。
+测试把打包后的主包与对应平台包安装到隔离目录，严格检查版本一致性，再验证安装后的公共接口。
+`engines.node` 保留 Node-API 4 的兼容范围；其他 Node.js 与平台组合未经 CI 直接验证。
+目前不提供 Linux musl 预编译包。
 
 Linux 下，非空的 `WAYLAND_DISPLAY` 或 `XDG_SESSION_TYPE=wayland` 会选择 Wayland 后端。
 合成器必须提供 `ext-data-control` 或 `wlr-data-control` 协议；仅存在 Wayland 会话并不代表支持。
@@ -177,10 +185,37 @@ Linux CI 覆盖 X11；真实 Wayland 互操作仍需在支持协议的合成器�
 
 Push 和 Pull Request 会构建、验证全部六个目标，不执行发布，提交名为 `vX.Y.Z` 也不会发布。
 手动运行 workflow 默认同样只构建和验证。
-发布前更新包版本及锁文件，再在 **Actions → CI → Run workflow** 中选择 `main`，
-明确勾选 **Publish release to npm**。全部构建、检查和剪贴板测试通过后才会发布。
-发布任务校验所有平台二进制，先发布平台包并确认 npm 上的版本，再发布主包。
-仓库需要配置具有发布权限的 `NPM_TOKEN` secret。
+发布步骤：
+
+1. 更新 `package.json` 的主包版本并提交到 `main`。打包任务统一同步平台包及可选依赖版本，
+   无需提前把源码锁文件指向尚未发布的平台版本。未发布到 crates.io 的 Rust 包版本与 npm 版本独立。
+2. 打开 [Actions → CI → Run workflow](https://github.com/Teddy-Zhu/node-clipboard-rs/actions/workflows/CI.yml)，选择 `main`。
+3. 按需勾选 **Publish GitHub Release**、**Publish release to npm**，或同时勾选；两者默认关闭。
+
+六个平台构建、代码检查和安装后的剪贴板测试必须全部通过，才会进入发布任务。
+GitHub 发布会以 `package.json` 版本创建 `v<版本号>` 标签，固定到本次 workflow 的提交，并自动生成发布说明。
+附件包含六个原生 `.node` 二进制、七个 npm `.tgz` 安装包、`manifest.json` 与 `SHA256SUMS`。
+全部附件上传成功后才正式发布；上传失败会保留草稿供重试。已有标签若指向其他提交则明确失败，
+已正式发布的 GitHub Release 不会被覆盖。
+仅发布 GitHub 使用工作流内置的 `GITHUB_TOKEN`，无需 `NPM_TOKEN`；仓库 Actions 须允许写入 Release。
+若启用了不可变 Release，需允许该工作流创建对应版本标签。
+
+npm 发布需要配置对全部七个包具有发布权限的 `NPM_TOKEN` secret，CI 同时启用 npm provenance。
+发布使用通过测试的原始安装包，先发布平台包并核对 registry 的完整性摘要，再发布主包。
+已存在且摘要一致的版本可以继续执行；同版本内容不同会明确失败。
+预发布版本使用 npm 的 `next` 标签及 GitHub 的 prerelease 标识；同时勾选时先发布 npm，再发布 GitHub。
+仅通过 GitHub 分发时，需把主包与对应平台的 tarball 一起安装，避免依赖尚未发布的 npm 平台包。
+
+## 致谢
+
+感谢以下开源项目的维护者与贡献者，为本项目提供核心能力和开发工具：
+
+- [clipboard-rs](https://github.com/ChurchTao/clipboard-rs)：系统剪贴板读写与变更通知。
+- [wl-clipboard-rs](https://github.com/YaLTeR/wl-clipboard-rs)：Wayland 剪贴板读写与监听。
+- [napi-rs](https://github.com/napi-rs/napi-rs)：Node-API 的 Rust 绑定、TypeScript 类型生成与原生包构建工具。
+- [Tokio](https://github.com/tokio-rs/tokio)：异步运行时集成。
+- [rust-url](https://github.com/servo/rust-url) 和 [rust-base64](https://github.com/marshallpierce/rust-base64)：文件 URL 处理与 Base64 编码。
+- [AVA](https://github.com/avajs/ava)：公共接口与剪贴板集成测试。
 
 ## 许可证
 
