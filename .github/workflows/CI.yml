@@ -6,10 +6,6 @@ env:
 permissions:
   contents: read
 'on':
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
     inputs:
       publish:
@@ -24,14 +20,11 @@ permissions:
         type: boolean
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    outputs:
-      publish_npm: ${{ steps.release.outputs.publish_npm }}
-      publish_github: ${{ steps.release.outputs.publish_github }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -39,9 +32,6 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      - name: Determine release targets
-        id: release
-        run: node scripts/release-targets.cjs
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -235,7 +225,7 @@ jobs:
       - lint
       - test-macOS-windows-binding
       - test-linux-binding
-    if: github.ref == 'refs/heads/main' && (needs.lint.outputs.publish_npm == 'true' || needs.lint.outputs.publish_github == 'true')
+    if: github.ref == 'refs/heads/main' && (inputs.publish || inputs.github_release)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v6
@@ -244,7 +234,7 @@ jobs:
           check-latest: true
           package-manager-cache: false
       - name: Install npm for trusted publishing
-        if: needs.lint.outputs.publish_npm == 'true'
+        if: inputs.publish
         run: |
           npm install --global npm@12 --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org
           npm --version
@@ -254,13 +244,13 @@ jobs:
           name: release-packages
           path: packages
       - name: Publish platform packages
-        if: needs.lint.outputs.publish_npm == 'true'
+        if: inputs.publish
         run: node scripts/publish-packages.cjs platforms
       - name: Publish main package
-        if: needs.lint.outputs.publish_npm == 'true'
+        if: inputs.publish
         run: node scripts/publish-packages.cjs main
       - name: Publish GitHub Release
-        if: needs.lint.outputs.publish_github == 'true'
+        if: inputs.github_release
         run: node scripts/github-release.cjs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

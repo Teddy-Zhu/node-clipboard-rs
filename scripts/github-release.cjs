@@ -20,9 +20,18 @@ function get(endpoint) {
   }
 }
 function checkTag() {
-  const commit = get(`commits/${tag}`)
-  if (commit) assert.equal(commit.sha, release.commit, `${tag} points to another commit`)
-  return commit
+  // The refs API returns 404 for missing tags; the commits API can return 422 instead.
+  const reference = get(`git/ref/tags/${encodeURIComponent(tag)}`)
+  if (!reference) return null
+  let object = reference.object
+  while (object?.type === 'tag') {
+    const annotated = get(`git/tags/${object.sha}`)
+    assert.ok(annotated, `Cannot resolve annotated tag: ${tag}`)
+    object = annotated.object
+  }
+  assert.equal(object?.type, 'commit', `${tag} does not point to a commit`)
+  assert.equal(object.sha, release.commit, `${tag} points to another commit`)
+  return object
 }
 
 function getRelease() {
