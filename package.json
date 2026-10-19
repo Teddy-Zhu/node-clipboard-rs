@@ -1,8 +1,9 @@
 {
   "name": "@teddyzhu/clipboard",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "it's a node package with napi-rs wrapper clipboard-rs",
   "main": "index.js",
+  "types": "index.d.ts",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Teddy-Zhu/node-clipboard-rs.git"
@@ -19,7 +20,7 @@
   "files": [
     "index.d.ts",
     "index.js",
-    "*.node"
+    "README.zh-CN.md"
   ],
   "napi": {
     "binaryName": "clipboard",
@@ -51,13 +52,13 @@
     "lint": "oxlint .",
     "prepublishOnly": "napi pre-publish -t npm",
     "test": "ava",
-    "version": "napi version",
+    "version": "napi create-npm-dirs && napi version",
     "prepare": "husky"
   },
   "devDependencies": {
     "@emnapi/core": "^1.4.3",
     "@emnapi/runtime": "^1.4.3",
-    "@napi-rs/cli": "^3.0.0",
+    "@napi-rs/cli": "^3.10.8",
     "@oxc-node/core": "^0.0.29",
     "@taplo/cli": "^0.7.0",
     "@tybys/wasm-util": "^0.10.0",

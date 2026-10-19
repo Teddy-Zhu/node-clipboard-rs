@@ -1,13 +1,11 @@
-use crate::{ClipboardData, ImageData};
+use crate::{files, ClipboardContents, ClipboardData, ImageData, ListenerState};
 use clipboard_rs::common::{RustImage, RustImageData};
 use napi::bindgen_prelude::Buffer;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use std::io::Read;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::thread;
-use wayland_clipboard_listener::{
-  ClipBoardListenMessage, WlClipboardListenerError, WlClipboardPasteStream, WlListenType,
-};
 use wl_clipboard_rs::copy::{
   self, ClipboardType as CopyClipboardType, Error as CopyError, MimeSource as CopyMimeSource,
   MimeType as CopyMimeType, Options as CopyOptions, Seat as CopySeat, Source as CopySource,
@@ -16,6 +14,8 @@ use wl_clipboard_rs::paste::{
   self, ClipboardType as PasteClipboardType, Error as PasteError, MimeType as PasteMimeType,
   Seat as PasteSeat,
 };
+
+use wl_clipboard_rs::watch::{CancelHandle, ClipboardEvent, ClipboardType, Watcher};
 
 macro_rules! wayland_log {
   ($($arg:tt)*) => {{
@@ -29,17 +29,8 @@ macro_rules! wayland_log {
   }};
 }
 
-fn wayland_error_detail(err: &WlClipboardListenerError) -> String {
-  match err {
-    WlClipboardListenerError::InitFailed(msg) => format!("InitFailed({msg})"),
-    WlClipboardListenerError::QueueError(msg) => format!("QueueError({msg})"),
-    WlClipboardListenerError::DispatchError(msg) => format!("DispatchError({msg})"),
-    WlClipboardListenerError::PipeError => "PipeError".to_string(),
-  }
-}
-
 pub(crate) fn is_wayland_environment() -> bool {
-  if std::env::var("WAYLAND_DISPLAY").is_ok() {
+  if std::env::var("WAYLAND_DISPLAY").is_ok_and(|display| !display.is_empty()) {
     return true;
   }
 
@@ -62,16 +53,13 @@ pub(crate) fn is_wayland_clipboard_available() -> bool {
     return false;
   }
 
-  match WlClipboardPasteStream::init(WlListenType::ListenOnCopy) {
+  match Watcher::new(ClipboardType::Regular, PasteSeat::Unspecified) {
     Ok(_) => {
       wayland_log!("is_wayland_clipboard_available=true");
       true
     }
     Err(e) => {
-      wayland_log!(
-        "is_wayland_clipboard_available=false: init failed: {}",
-        wayland_error_detail(&e)
-      );
+      wayland_log!("is_wayland_clipboard_available=false: init failed: {}", e);
       false
     }
   }
@@ -174,12 +162,13 @@ fn infer_wayland_available_formats(offered_mimes: &[String]) -> Vec<String> {
   formats
 }
 
-fn decode_wayland_files(payload: &[u8]) -> Option<Vec<String>> {
-  let file_list = String::from_utf8(payload.to_vec()).ok()?;
+fn decode_wayland_files(payload: &[u8]) -> WaylandResult<Vec<String>> {
+  let file_list =
+    std::str::from_utf8(payload).map_err(|e| format!("Invalid clipboard files encoding: {e}"))?;
   let mut files = Vec::new();
 
   for line in file_list.lines() {
-    let item = line.trim();
+    let item = line;
     if item.is_empty() || item.starts_with('#') {
       continue;
     }
@@ -191,11 +180,7 @@ fn decode_wayland_files(payload: &[u8]) -> Option<Vec<String>> {
     files.push(item.to_string());
   }
 
-  if files.is_empty() {
-    None
-  } else {
-    Some(files)
-  }
+  files::local_paths(files)
 }
 
 fn detect_wayland_image_magic(payload: &[u8]) -> Option<&'static str> {
@@ -215,15 +200,6 @@ fn detect_wayland_image_magic(payload: &[u8]) -> Option<&'static str> {
     return Some("webp");
   }
   None
-}
-
-fn wayland_payload_head_hex(payload: &[u8], max_bytes: usize) -> String {
-  payload
-    .iter()
-    .take(max_bytes)
-    .map(|byte| format!("{byte:02x}"))
-    .collect::<Vec<_>>()
-    .join(" ")
 }
 
 const WAYLAND_RTF_MIME_PRIORITY: &[&str] = &[
@@ -259,6 +235,7 @@ const WAYLAND_FILES_MIME_PRIORITY: &[&str] = &[
 ];
 
 type WaylandResult<T> = std::result::Result<T, String>;
+type ContentReader<'a> = dyn FnMut(&str) -> WaylandResult<Vec<u8>> + 'a;
 
 fn wayland_paste_error_detail(err: &PasteError) -> String {
   err.to_string()
@@ -342,6 +319,7 @@ fn read_wayland_textual_content(
   preferred: &[&str],
   fallback_predicate: fn(&str) -> bool,
   format_name: &str,
+  read: &mut ContentReader<'_>,
 ) -> Option<String> {
   let selected_mime = find_wayland_mime(offered_mimes, preferred).or_else(|| {
     offered_mimes
@@ -349,7 +327,7 @@ fn read_wayland_textual_content(
       .find(|mime| fallback_predicate(mime.as_str()))
       .map(|mime| mime.as_str())
   })?;
-  let (payload, _) = get_wayland_contents_bytes(PasteMimeType::Specific(selected_mime)).ok()?;
+  let payload = read(selected_mime).map_err(|e| wayland_log!("{e}")).ok()?;
   Some(decode_utf8_payload_lossy(
     payload,
     format_name,
@@ -357,7 +335,10 @@ fn read_wayland_textual_content(
   ))
 }
 
-fn read_wayland_image_content(offered_mimes: &[String]) -> Option<ImageData> {
+fn read_wayland_image_content(
+  offered_mimes: &[String],
+  read: &mut ContentReader<'_>,
+) -> Option<ImageData> {
   let selected_mime =
     find_wayland_mime(offered_mimes, WAYLAND_IMAGE_MIME_PRIORITY).or_else(|| {
       offered_mimes
@@ -365,11 +346,16 @@ fn read_wayland_image_content(offered_mimes: &[String]) -> Option<ImageData> {
         .find(|mime| is_wayland_image_mime(mime))
         .map(|mime| mime.as_str())
     })?;
-  let (payload, _) = get_wayland_contents_bytes(PasteMimeType::Specific(selected_mime)).ok()?;
-  Some(to_wayland_image_data(payload))
+  let payload = read(selected_mime).map_err(|e| wayland_log!("{e}")).ok()?;
+  to_wayland_image_data(payload)
+    .map_err(|e| wayland_log!("{e}"))
+    .ok()
 }
 
-fn read_wayland_files_content(offered_mimes: &[String]) -> Option<Vec<String>> {
+fn read_wayland_files_content(
+  offered_mimes: &[String],
+  read: &mut ContentReader<'_>,
+) -> Option<Vec<String>> {
   let selected_mime =
     find_wayland_mime(offered_mimes, WAYLAND_FILES_MIME_PRIORITY).or_else(|| {
       offered_mimes
@@ -377,11 +363,16 @@ fn read_wayland_files_content(offered_mimes: &[String]) -> Option<Vec<String>> {
         .find(|mime| is_wayland_files_mime(mime))
         .map(|mime| mime.as_str())
     })?;
-  let (payload, _) = get_wayland_contents_bytes(PasteMimeType::Specific(selected_mime)).ok()?;
+  let payload = read(selected_mime).map_err(|e| wayland_log!("{e}")).ok()?;
   decode_wayland_files(&payload)
+    .map_err(|e| wayland_log!("{e}"))
+    .ok()
 }
 
-fn read_wayland_complete_data_from_mimes(offered_mimes: &[String]) -> ClipboardData {
+fn read_wayland_complete_data_from_mimes(
+  offered_mimes: &[String],
+  read: &mut ContentReader<'_>,
+) -> ClipboardData {
   let mut available_formats = infer_wayland_available_formats(offered_mimes);
   extend_wayland_formats_with_custom_mimes(&mut available_formats, offered_mimes);
 
@@ -391,6 +382,7 @@ fn read_wayland_complete_data_from_mimes(offered_mimes: &[String]) -> ClipboardD
       WAYLAND_TEXT_MIME_PRIORITY,
       is_wayland_text_mime,
       "text",
+      read,
     )
   } else {
     None
@@ -402,6 +394,7 @@ fn read_wayland_complete_data_from_mimes(offered_mimes: &[String]) -> ClipboardD
       WAYLAND_HTML_MIME_PRIORITY,
       is_wayland_html_mime,
       "html",
+      read,
     )
   } else {
     None
@@ -413,19 +406,20 @@ fn read_wayland_complete_data_from_mimes(offered_mimes: &[String]) -> ClipboardD
       WAYLAND_RTF_MIME_PRIORITY,
       is_wayland_rtf_mime,
       "rich text",
+      read,
     )
   } else {
     None
   };
 
   let image = if has_wayland_format(&available_formats, "image") {
-    read_wayland_image_content(offered_mimes)
+    read_wayland_image_content(offered_mimes, read)
   } else {
     None
   };
 
   let files = if has_wayland_format(&available_formats, "files") {
-    read_wayland_files_content(offered_mimes)
+    read_wayland_files_content(offered_mimes, read)
   } else {
     None
   };
@@ -440,35 +434,20 @@ fn read_wayland_complete_data_from_mimes(offered_mimes: &[String]) -> ClipboardD
   }
 }
 
-fn to_wayland_image_data(payload: Vec<u8>) -> ImageData {
-  match RustImageData::from_bytes(&payload) {
-    Ok(image_data) => {
-      let (width, height) = image_data.get_size();
-      match image_data.to_png() {
-        Ok(png_data) => {
-          let bytes = png_data.get_bytes();
-          ImageData {
-            width,
-            height,
-            size: bytes.len() as u32,
-            data: Buffer::from(bytes.to_vec()),
-          }
-        }
-        Err(_) => ImageData {
-          width,
-          height,
-          size: payload.len() as u32,
-          data: Buffer::from(payload),
-        },
-      }
-    }
-    Err(_) => ImageData {
-      width: 0,
-      height: 0,
-      size: payload.len() as u32,
-      data: Buffer::from(payload),
-    },
-  }
+fn to_wayland_image_data(payload: Vec<u8>) -> WaylandResult<ImageData> {
+  let image_data = RustImageData::from_bytes(&payload)
+    .map_err(|e| format!("Failed to decode clipboard image: {e}"))?;
+  let (width, height) = image_data.get_size();
+  let png_data = image_data
+    .to_png()
+    .map_err(|e| format!("Failed to convert clipboard image to PNG: {e}"))?;
+  let bytes = png_data.get_bytes();
+  Ok(ImageData {
+    width,
+    height,
+    size: bytes.len() as u32,
+    data: Buffer::from(bytes.to_vec()),
+  })
 }
 
 fn append_wayland_file_sources(target: &mut Vec<CopyMimeSource>, files: &[String]) {
@@ -625,7 +604,6 @@ pub(crate) fn get_files() -> WaylandResult<Vec<String>> {
 
   let (payload, _) = get_wayland_contents_bytes(PasteMimeType::Specific(selected_mime))?;
   decode_wayland_files(&payload)
-    .ok_or_else(|| "Failed to decode clipboard files payload".to_string())
 }
 
 pub(crate) fn set_files(files: Vec<String>) -> WaylandResult<()> {
@@ -647,7 +625,7 @@ pub(crate) fn get_buffer(format: String) -> WaylandResult<Vec<u8>> {
   Ok(payload)
 }
 
-pub(crate) fn set_contents(contents: ClipboardData) -> WaylandResult<()> {
+pub(crate) fn set_contents(contents: ClipboardContents) -> WaylandResult<()> {
   let mut sources = Vec::new();
 
   if let Some(text) = contents.text {
@@ -718,278 +696,79 @@ pub(crate) fn clear() -> WaylandResult<()> {
 
 pub(crate) fn get_full_clipboard_data() -> WaylandResult<ClipboardData> {
   let offered_mimes = get_wayland_mime_types_ordered_or_empty()?;
-  Ok(read_wayland_complete_data_from_mimes(&offered_mimes))
-}
-
-fn wayland_context_to_clipboard_data(message: ClipBoardListenMessage) -> ClipboardData {
-  let ClipBoardListenMessage {
-    mime_types: offered_mime_types,
-    context,
-  } = message;
-  let mime_type = context.mime_type;
-  let payload = context.context;
-  let payload_len = payload.len();
-  let payload_magic = detect_wayland_image_magic(&payload);
-  let payload_head = wayland_payload_head_hex(&payload, 16);
-  let offered_image_mimes: Vec<&str> = offered_mime_types
-    .iter()
-    .filter(|mime| is_wayland_image_mime(mime.as_str()))
-    .map(|mime| mime.as_str())
-    .collect();
-
-  wayland_log!(
-    "wayland message received: selected_mime={}, offered_mimes={:?}, bytes={}, payload_head=[{}], payload_magic={:?}",
-    mime_type,
-    offered_mime_types,
-    payload_len,
-    payload_head,
-    payload_magic
-  );
-  if !is_wayland_image_mime(mime_type.as_str()) && !offered_image_mimes.is_empty() {
-    wayland_log!(
-      "wayland possible mime mismatch: selected_mime={} but offered image mimes exist={:?}",
-      mime_type,
-      offered_image_mimes
-    );
-  }
-  if payload_magic.is_some() && !is_wayland_image_mime(mime_type.as_str()) {
-    wayland_log!(
-      "wayland suspicious payload: selected_mime={} but payload looks like image({:?})",
-      mime_type,
-      payload_magic
-    );
-  }
-
-  let mut available_formats = infer_wayland_available_formats(&offered_mime_types);
-  extend_wayland_formats_with_custom_mimes(&mut available_formats, &offered_mime_types);
-  let mut text = None;
-  let mut rtf = None;
-  let mut html = None;
-  let mut image = None;
-  let mut files = None;
-
-  if is_wayland_text_mime(mime_type.as_str()) {
-    push_wayland_format(&mut available_formats, "text");
-    if payload_len == 0 && has_wayland_format(&available_formats, "image") {
-      wayland_log!(
-        "wayland text payload ignored: selected_mime={}, bytes=0, inferred_formats={:?}",
-        mime_type,
-        available_formats
-      );
-    } else {
-      let text_content = decode_utf8_payload_lossy(payload, "text", &mime_type);
-      wayland_log!(
-        "wayland classified as text: selected_mime={}, chars={}",
-        mime_type,
-        text_content.chars().count()
-      );
-      text = Some(text_content);
-    }
-  } else if is_wayland_html_mime(mime_type.as_str()) {
-    push_wayland_format(&mut available_formats, "html");
-    let html_content = decode_utf8_payload_lossy(payload, "html", &mime_type);
-    wayland_log!(
-      "wayland classified as html: selected_mime={}, chars={}",
-      mime_type,
-      html_content.chars().count()
-    );
-    html = Some(html_content);
-  } else if is_wayland_rtf_mime(mime_type.as_str()) {
-    push_wayland_format(&mut available_formats, "rtf");
-    let rtf_content = decode_utf8_payload_lossy(payload, "rich text", &mime_type);
-    wayland_log!(
-      "wayland classified as rtf: selected_mime={}, chars={}",
-      mime_type,
-      rtf_content.chars().count()
-    );
-    rtf = Some(rtf_content);
-  } else if is_wayland_image_mime(mime_type.as_str()) {
-    push_wayland_format(&mut available_formats, "image");
-    wayland_log!(
-      "wayland classified as image: selected_mime={}, bytes={}, payload_magic={:?}",
-      mime_type,
-      payload_len,
-      payload_magic
-    );
-    image = Some(ImageData {
-      width: 0,
-      height: 0,
-      size: payload_len as u32,
-      data: Buffer::from(payload),
-    });
-  } else if is_wayland_files_mime(mime_type.as_str()) {
-    push_wayland_format(&mut available_formats, "files");
-    files = decode_wayland_files(&payload);
-    wayland_log!(
-      "wayland classified as files: selected_mime={}, count={}",
-      mime_type,
-      files.as_ref().map(|list| list.len()).unwrap_or(0)
-    );
-  } else if std::str::from_utf8(&payload).is_ok() {
-    let text_content = decode_utf8_payload_lossy(payload, "text", &mime_type);
-    push_wayland_format(&mut available_formats, "text");
-    wayland_log!(
-      "wayland fallback to text: unsupported selected_mime={}, chars={}, offered_mimes={:?}",
-      mime_type,
-      text_content.chars().count(),
-      offered_mime_types
-    );
-    text = Some(text_content);
-  } else {
-    wayland_log!(
-      "wayland unsupported mime_type and utf8 decode failed: mime_type={}",
-      mime_type
-    );
-  }
-
-  wayland_log!(
-    "wayland conversion result: selected_mime={}, available_formats={:?}, has_text={}, has_rtf={}, has_html={}, has_image={}, has_files={}",
-    mime_type,
-    available_formats,
-    text.is_some(),
-    rtf.is_some(),
-    html.is_some(),
-    image.is_some(),
-    files.is_some()
-  );
-
-  ClipboardData {
-    available_formats,
-    text,
-    rtf,
-    html,
-    image,
-    files,
-  }
-}
-
-fn merge_wayland_clipboard_data(
-  mut primary: ClipboardData,
-  fallback: ClipboardData,
-) -> ClipboardData {
-  if primary.available_formats.is_empty() {
-    primary.available_formats = fallback.available_formats;
-  }
-  if primary.text.is_none() {
-    primary.text = fallback.text;
-  }
-  if primary.rtf.is_none() {
-    primary.rtf = fallback.rtf;
-  }
-  if primary.html.is_none() {
-    primary.html = fallback.html;
-  }
-  if primary.image.is_none() {
-    primary.image = fallback.image;
-  }
-  if primary.files.is_none() {
-    primary.files = fallback.files;
-  }
-  primary
+  Ok(read_wayland_complete_data_from_mimes(
+    &offered_mimes,
+    &mut |mime| {
+      get_wayland_contents_bytes(PasteMimeType::Specific(mime)).map(|(payload, _)| payload)
+    },
+  ))
 }
 
 pub(crate) fn start_wayland_watch(
   tsfn: ThreadsafeFunction<ClipboardData, (), ClipboardData, napi::Status, false>,
-) -> mpsc::Sender<()> {
-  let (stop_tx, stop_rx) = mpsc::channel::<()>();
+  running: Arc<AtomicBool>,
+) -> napi::Result<CancelHandle> {
+  let (startup_tx, startup_rx) = mpsc::sync_channel(1);
 
-  thread::spawn(move || {
-    wayland_log!("watch_wayland thread started");
-
-    let mut stream = match WlClipboardPasteStream::init(WlListenType::ListenOnCopy) {
-      Ok(stream) => {
-        wayland_log!("watch_wayland stream initialized");
-        stream
-      }
-      Err(e) => {
-        wayland_log!(
-          "watch_wayland stream init failed: {}",
-          wayland_error_detail(&e)
-        );
+  thread::Builder::new()
+    .name("clipboard-wayland".to_string())
+    .spawn(move || {
+      let _state = ListenerState(Arc::clone(&running));
+      let mut watcher = match Watcher::new(ClipboardType::Regular, PasteSeat::Unspecified) {
+        Ok(watcher) => watcher,
+        Err(e) => {
+          let _ = startup_tx.send(Err(format!(
+            "Failed to start Wayland clipboard listener: {e}"
+          )));
+          return;
+        }
+      };
+      if startup_tx.send(Ok(watcher.cancel_handle())).is_err() {
         return;
       }
-    };
 
-    let priority = vec![
-      "image/png".into(),
-      "image/jpeg".into(),
-      "image/webp".into(),
-      "image/bmp".into(),
-      "image/gif".into(),
-      "application/x-qt-image".into(),
-      "text/rtf".into(),
-      "application/rtf".into(),
-      "application/x-rtf".into(),
-      "text/richtext".into(),
-      "text/uri-list".into(),
-      "x-special/gnome-copied-files".into(),
-      "x-special/nautilus-clipboard".into(),
-      "text/html".into(),
-      "text/plain;charset=utf-8".into(),
-      "text/plain".into(),
-    ];
-    stream.set_priority(priority.clone());
-    wayland_log!("watch_wayland stream priority configured: {:?}", priority);
-
-    let mut event_index: u64 = 0;
-    for context_result in stream.paste_stream() {
-      if stop_rx.try_recv().is_ok() {
-        wayland_log!("watch_wayland received stop signal");
-        break;
-      }
-
-      match context_result {
-        Ok(message) => {
-          event_index += 1;
-          let selected_mime = message.context.mime_type.clone();
-          let offered_mimes = message.mime_types.clone();
-          let payload_len = message.context.context.len();
-          wayland_log!(
-            "watch_wayland event #{} raw message: selected_mime={}, offered_mimes={:?}, bytes={}",
-            event_index,
-            selected_mime,
-            offered_mimes,
-            payload_len
-          );
-
-          let complete_data = read_wayland_complete_data_from_mimes(&offered_mimes);
-          let fallback_data = wayland_context_to_clipboard_data(message);
-          let clipboard_data = merge_wayland_clipboard_data(complete_data, fallback_data);
-          wayland_log!(
-            "watch_wayland event #{} normalized result: available_formats={:?}, has_text={}, has_rtf={}, has_html={}, has_image={}, has_files={}",
-            event_index,
-            clipboard_data.available_formats,
-            clipboard_data.text.is_some(),
-            clipboard_data.rtf.is_some(),
-            clipboard_data.html.is_some(),
-            clipboard_data.image.is_some(),
-            clipboard_data.files.is_some()
-          );
-
-          let status = tsfn.call(clipboard_data, ThreadsafeFunctionCallMode::NonBlocking);
-          if status == napi::Status::Ok {
-            wayland_log!(
-              "watch_wayland callback dispatched for event #{}",
-              event_index
-            );
-          } else {
-            wayland_log!(
-              "watch_wayland callback dispatch failed: event=#{}, status={status:?}",
-              event_index
-            );
+      while running.load(Ordering::Acquire) {
+        let clipboard_data = match watcher.next_event() {
+          Ok(Some(ClipboardEvent::Changed {
+            mime_types,
+            mut offer,
+            ..
+          })) => {
+            // Read all formats from the event's offer to avoid mixing different selections.
+            read_wayland_complete_data_from_mimes(&mime_types, &mut |mime| {
+              let mut pipe = offer
+                .receive(mime)
+                .map_err(|e| format!("Failed to receive {mime}: {e}"))?;
+              let mut payload = Vec::new();
+              pipe
+                .read_to_end(&mut payload)
+                .map_err(|e| format!("Failed to read {mime}: {e}"))?;
+              Ok(payload)
+            })
           }
+          Ok(Some(ClipboardEvent::Cleared { .. })) => {
+            read_wayland_complete_data_from_mimes(&[], &mut |_| unreachable!())
+          }
+          Ok(None) => break,
+          Err(e) => {
+            wayland_log!("Wayland clipboard listener stopped: {e}");
+            break;
+          }
+        };
+        if !running.load(Ordering::Acquire) {
+          break;
         }
-        Err(e) => {
-          wayland_log!(
-            "watch_wayland stream yielded error: {}",
-            wayland_error_detail(&e)
-          );
+        let status = tsfn.call(clipboard_data, ThreadsafeFunctionCallMode::NonBlocking);
+        if status != napi::Status::Ok {
+          wayland_log!("Wayland clipboard callback failed: {status:?}");
+          break;
         }
       }
-    }
+    })
+    .map_err(|e| napi::Error::from_reason(format!("Failed to spawn Wayland listener: {e}")))?;
 
-    wayland_log!("watch_wayland loop exited");
-  });
-
-  stop_tx
+  startup_rx
+    .recv()
+    .map_err(|e| napi::Error::from_reason(format!("Wayland listener startup interrupted: {e}")))?
+    .map_err(napi::Error::from_reason)
 }

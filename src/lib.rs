@@ -9,8 +9,11 @@ use clipboard_rs::{
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::thread;
+
+mod files;
 
 #[cfg(target_os = "linux")]
 mod wayland;
@@ -94,6 +97,23 @@ pub struct ClipboardData {
   pub image: Option<ImageData>,
   /// 文件列表
   pub files: Option<Vec<String>>,
+}
+
+/// 写入剪贴板的内容，所有字段均可省略
+#[napi(object)]
+pub struct ClipboardContents {
+  /// 纯文本内容
+  pub text: Option<String>,
+  /// RTF 富文本内容
+  pub rtf: Option<String>,
+  /// HTML 内容
+  pub html: Option<String>,
+  /// 图片数据
+  pub image: Option<ImageData>,
+  /// 本机绝对路径或 file:// URI 列表
+  pub files: Option<Vec<String>>,
+  /// 兼容 ClipboardData，可省略；写入时根据实际内容决定格式，忽略此字段
+  pub available_formats: Option<Vec<String>>,
 }
 
 /// 剪贴板管理器，提供跨平台的剪贴板操作功能
@@ -390,7 +410,7 @@ impl ClipboardManager {
     Ok(Buffer::from(png_bytes))
   }
 
-  /// 获取剪贴板中的文件列表
+  /// 获取剪贴板中的文件列表，返回本机绝对路径
   #[napi]
   pub fn get_files(&self) -> Result<Vec<String>> {
     #[cfg(target_os = "linux")]
@@ -400,14 +420,18 @@ impl ClipboardManager {
     }
 
     let context = get_context_or_error(self.context.as_ref())?;
-    context
+    let files = context
       .get_files()
+      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get files: {e}")))?;
+    files::local_paths(files)
       .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get files: {e}")))
   }
 
-  /// 设置剪贴板中的文件列表
+  /// 设置剪贴板中的文件列表，接受本机绝对路径或 file:// URI
   #[napi]
   pub fn set_files(&self, files: Vec<String>) -> Result<()> {
+    let files = files::clipboard_files(files).map_err(|e| Error::new(Status::InvalidArg, e))?;
+
     #[cfg(target_os = "linux")]
     if is_wayland_environment() {
       return wayland::set_files(files)
@@ -454,7 +478,13 @@ impl ClipboardManager {
 
   /// 设置剪贴板中的复合内容（可同时设置多种格式）
   #[napi]
-  pub fn set_contents(&self, contents: ClipboardData) -> Result<()> {
+  pub fn set_contents(&self, mut contents: ClipboardContents) -> Result<()> {
+    contents.files = contents
+      .files
+      .map(files::clipboard_files)
+      .transpose()
+      .map_err(|e| Error::new(Status::InvalidArg, e))?;
+
     #[cfg(target_os = "linux")]
     if is_wayland_environment() {
       return wayland::set_contents(contents).map_err(|e| {
@@ -602,14 +632,13 @@ impl ClipboardManager {
       .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {e}")))?;
     }
 
-    let context = ClipboardContext::new().map_err(|e| {
-      Error::new(
-        Status::GenericFailure,
-        format!("Failed to create clipboard context: {e}"),
-      )
-    })?;
-
     tokio::task::spawn_blocking(move || {
+      let context = ClipboardContext::new().map_err(|e| {
+        Error::new(
+          Status::GenericFailure,
+          format!("Failed to create clipboard context: {e}"),
+        )
+      })?;
       context
         .get_text()
         .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get text: {e}")))
@@ -631,14 +660,13 @@ impl ClipboardManager {
       .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {e}")))?;
     }
 
-    let context = ClipboardContext::new().map_err(|e| {
-      Error::new(
-        Status::GenericFailure,
-        format!("Failed to create clipboard context: {e}"),
-      )
-    })?;
-
     tokio::task::spawn_blocking(move || {
+      let context = ClipboardContext::new().map_err(|e| {
+        Error::new(
+          Status::GenericFailure,
+          format!("Failed to create clipboard context: {e}"),
+        )
+      })?;
       context
         .set_text(text)
         .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set text: {e}")))
@@ -662,14 +690,13 @@ impl ClipboardManager {
       .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {e}")))?;
     }
 
-    let context = ClipboardContext::new().map_err(|e| {
-      Error::new(
-        Status::GenericFailure,
-        format!("Failed to create clipboard context: {e}"),
-      )
-    })?;
-
     tokio::task::spawn_blocking(move || {
+      let context = ClipboardContext::new().map_err(|e| {
+        Error::new(
+          Status::GenericFailure,
+          format!("Failed to create clipboard context: {e}"),
+        )
+      })?;
       let image_data = context
         .get_image()
         .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
@@ -694,14 +721,13 @@ impl ClipboardManager {
       .map_err(|e| Error::new(Status::GenericFailure, format!("Task join error: {e}")))?;
     }
 
-    let context = ClipboardContext::new().map_err(|e| {
-      Error::new(
-        Status::GenericFailure,
-        format!("Failed to create clipboard context: {e}"),
-      )
-    })?;
-
     tokio::task::spawn_blocking(move || {
+      let context = ClipboardContext::new().map_err(|e| {
+        Error::new(
+          Status::GenericFailure,
+          format!("Failed to create clipboard context: {e}"),
+        )
+      })?;
       let image_data = context
         .get_image()
         .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get image: {e}")))?;
@@ -995,105 +1021,22 @@ pub fn get_clipboard_buffer(format: String) -> Result<Buffer> {
   Ok(Buffer::from(data))
 }
 
-/// 快速设置剪贴板文件列表
+/// 快速设置剪贴板文件列表，接受本机绝对路径或 file:// URI
 #[napi]
 pub fn set_clipboard_files(files: Vec<String>) -> Result<()> {
-  #[cfg(target_os = "linux")]
-  if is_wayland_environment() {
-    return wayland::set_files(files)
-      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set files: {e}")));
-  }
-
-  let context = ClipboardContext::new().map_err(|e| {
-    Error::new(
-      Status::GenericFailure,
-      format!("Failed to create clipboard context: {e}"),
-    )
-  })?;
-
-  context
-    .set_files(files)
-    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to set files: {e}")))
+  ClipboardManager::new()?.set_files(files)
 }
 
-/// 快速获取剪贴板文件列表
+/// 快速获取剪贴板文件列表，返回本机绝对路径
 #[napi]
 pub fn get_clipboard_files() -> Result<Vec<String>> {
-  #[cfg(target_os = "linux")]
-  if is_wayland_environment() {
-    return wayland::get_files()
-      .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get files: {e}")));
-  }
-
-  let context = ClipboardContext::new().map_err(|e| {
-    Error::new(
-      Status::GenericFailure,
-      format!("Failed to create clipboard context: {e}"),
-    )
-  })?;
-
-  context
-    .get_files()
-    .map_err(|e| Error::new(Status::GenericFailure, format!("Failed to get files: {e}")))
+  ClipboardManager::new()?.get_files()
 }
 
 /// 快速设置剪贴板复合内容（可同时设置多种格式）
 #[napi]
-pub fn set_clipboard_contents(contents: ClipboardData) -> Result<()> {
-  #[cfg(target_os = "linux")]
-  if is_wayland_environment() {
-    return wayland::set_contents(contents).map_err(|e| {
-      Error::new(
-        Status::GenericFailure,
-        format!("Failed to set contents: {e}"),
-      )
-    });
-  }
-
-  let context = ClipboardContext::new().map_err(|e| {
-    Error::new(
-      Status::GenericFailure,
-      format!("Failed to create clipboard context: {e}"),
-    )
-  })?;
-
-  use clipboard_rs::ClipboardContent;
-
-  let mut clipboard_contents = Vec::new();
-
-  if let Some(text) = contents.text {
-    clipboard_contents.push(ClipboardContent::Text(text));
-  }
-
-  if let Some(html) = contents.html {
-    clipboard_contents.push(ClipboardContent::Html(html));
-  }
-
-  if let Some(rtf) = contents.rtf {
-    clipboard_contents.push(ClipboardContent::Rtf(rtf));
-  }
-
-  if let Some(image_data) = contents.image {
-    let rust_image = RustImageData::from_bytes(image_data.data.as_ref()).map_err(|e| {
-      Error::new(
-        Status::GenericFailure,
-        format!("Failed to create image from bytes: {e}"),
-      )
-    })?;
-
-    clipboard_contents.push(ClipboardContent::Image(rust_image));
-  }
-
-  if let Some(files) = contents.files {
-    clipboard_contents.push(ClipboardContent::Files(files));
-  }
-
-  context.set(clipboard_contents).map_err(|e| {
-    Error::new(
-      Status::GenericFailure,
-      format!("Failed to set contents: {e}"),
-    )
-  })
+pub fn set_clipboard_contents(contents: ClipboardContents) -> Result<()> {
+  ClipboardManager::new()?.set_contents(contents)
 }
 
 /// 快速获取完整的剪贴板数据
@@ -1197,7 +1140,11 @@ fn get_clipboard_data(context: &ClipboardContext) -> ClipboardData {
           });
         }
         "files" => {
-          files = context.get_files().ok();
+          files = context.get_files().ok().and_then(|paths| {
+            files::local_paths(paths)
+              .map_err(|e| listener_log!("Failed to decode clipboard files: {e}"))
+              .ok()
+          });
         }
         _ => {}
       }
@@ -1220,24 +1167,23 @@ enum ListenerType {
   ClipboardRs(clipboard_rs::WatcherShutdown),
   /// 使用 Wayland 专用监听器（仅 Linux）
   #[cfg(target_os = "linux")]
-  Wayland(std::sync::mpsc::Sender<()>),
+  Wayland(wl_clipboard_rs::watch::CancelHandle),
 }
 
 /// 剪贴板监听器实例，用于监听剪贴板变化并支持停止
 /// 支持自动检测环境：在 Wayland 环境下使用 Wayland 专用监听器，否则使用通用监听器
 /// 使用方法：
 /// ```javascript
-/// const { ClipboardListener } = require('./index.node');
+/// const { ClipboardListener } = require('@teddyzhu/clipboard');
 /// const listener = new ClipboardListener();
 /// listener.watch((data) => {
 ///   console.log('剪贴板数据变化:', data);
-///   console.log('可用格式:', data.available_formats);
+///   console.log('可用格式:', data.availableFormats);
 ///   if (data.text) console.log('文本:', data.text);
 ///   if (data.html) console.log('HTML:', data.html);
 ///   if (data.rtf) console.log('RTF:', data.rtf);
-///   if (data.image) console.log('图片 (base64):', data.image.substring(0, 50) + '...');
+///   if (data.image) console.log('图片:', data.image.width, data.image.height);
 ///   if (data.files) console.log('文件:', data.files);
-///   if (data.other) console.log('其他格式:', data.other);
 /// });
 /// // 停止监听
 /// listener.stop();
@@ -1246,6 +1192,7 @@ enum ListenerType {
 pub struct ClipboardListener {
   listener_type: Option<ListenerType>,
   is_wayland: bool,
+  running: Arc<AtomicBool>,
 }
 
 #[napi]
@@ -1264,6 +1211,7 @@ impl ClipboardListener {
     Ok(ClipboardListener {
       listener_type: None,
       is_wayland,
+      running: Arc::new(AtomicBool::new(false)),
     })
   }
 
@@ -1290,13 +1238,16 @@ impl ClipboardListener {
       .build_callback(|ctx| Ok(ctx.value))?;
     listener_log!("threadsafe callback created");
 
-    if self.is_wayland {
-      listener_log!("starting wayland listener");
+    self.running = Arc::new(AtomicBool::new(true));
+    let result = if self.is_wayland {
       self.watch_wayland(tsfn)
     } else {
-      listener_log!("starting generic listener");
       self.watch_generic(tsfn)
+    };
+    if result.is_err() {
+      self.running.store(false, Ordering::Release);
     }
+    result
   }
 
   /// 使用 Wayland 专用监听器监听剪贴板变化
@@ -1307,10 +1258,10 @@ impl ClipboardListener {
   ) -> Result<()> {
     listener_log!("watch_wayland setup begin");
 
-    let stop_tx = wayland::start_wayland_watch(tsfn);
+    let cancel = wayland::start_wayland_watch(tsfn, Arc::clone(&self.running))?;
 
     // 保存停止通道
-    self.listener_type = Some(ListenerType::Wayland(stop_tx));
+    self.listener_type = Some(ListenerType::Wayland(cancel));
     listener_log!("watch_wayland setup completed");
     Ok(())
   }
@@ -1334,95 +1285,73 @@ impl ClipboardListener {
   ) -> Result<()> {
     listener_log!("watch_generic setup begin");
 
-    // 创建通道用于传递 shutdown
-    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<clipboard_rs::WatcherShutdown>();
+    let (startup_tx, startup_rx) = std::sync::mpsc::sync_channel(1);
+    let running = Arc::clone(&self.running);
 
-    // 在新线程中启动剪贴板监听
-    thread::spawn(move || {
-      listener_log!("watch_generic thread started");
-
-      // 创建剪贴板上下文
-      let ctx = match ClipboardContext::new() {
-        Ok(ctx) => {
-          listener_log!("watch_generic clipboard context initialized");
-          ctx
+    thread::Builder::new()
+      .name("clipboard-generic".to_string())
+      .spawn(move || {
+        let _state = ListenerState(Arc::clone(&running));
+        struct Handler {
+          ctx: ClipboardContext,
+          callback: ThreadsafeFunction<ClipboardData, (), ClipboardData, napi::Status, false>,
+          running: Arc<AtomicBool>,
         }
-        Err(e) => {
-          listener_log!("watch_generic clipboard context init failed: {e}");
-          return;
-        }
-      };
 
-      // 创建处理器
-      struct Handler {
-        ctx: ClipboardContext,
-        callback: ThreadsafeFunction<ClipboardData, (), ClipboardData, napi::Status, false>,
-      }
-
-      impl ClipboardHandler for Handler {
-        fn on_clipboard_change(&mut self) {
-          let clipboard_data = get_clipboard_data(&self.ctx);
-          let status = self
-            .callback
-            .call(clipboard_data, ThreadsafeFunctionCallMode::NonBlocking);
-          if status == napi::Status::Ok {
-            listener_log!("watch_generic callback dispatched");
-          } else {
-            listener_log!("watch_generic callback dispatch failed: status={status:?}");
+        impl ClipboardHandler for Handler {
+          fn on_clipboard_change(&mut self) {
+            if !self.running.load(Ordering::Acquire) {
+              return;
+            }
+            let clipboard_data = get_clipboard_data(&self.ctx);
+            if !self.running.load(Ordering::Acquire) {
+              return;
+            }
+            let status = self
+              .callback
+              .call(clipboard_data, ThreadsafeFunctionCallMode::NonBlocking);
+            if status != napi::Status::Ok {
+              listener_log!("Generic clipboard callback failed: {status:?}");
+            }
           }
         }
-      }
 
-      let handler = Handler {
-        ctx,
-        callback: tsfn,
-      };
-
-      // 创建监听器上下文
-      let mut watcher = match ClipboardWatcherContext::new() {
-        Ok(watcher) => {
-          listener_log!("watch_generic watcher context initialized");
-          watcher
+        let setup = || -> Result<_> {
+          let ctx = ClipboardContext::new()
+            .map_err(|e| Error::from_reason(format!("Failed to create clipboard context: {e}")))?;
+          let mut watcher = ClipboardWatcherContext::new()
+            .map_err(|e| Error::from_reason(format!("Failed to create clipboard watcher: {e}")))?;
+          watcher.add_handler(Handler {
+            ctx,
+            callback: tsfn,
+            running,
+          });
+          Ok(watcher)
+        };
+        match setup() {
+          Ok(mut watcher) => {
+            if startup_tx.send(Ok(watcher.get_shutdown_channel())).is_ok() {
+              watcher.start_watch();
+            }
+          }
+          Err(e) => {
+            let _ = startup_tx.send(Err(e));
+          }
         }
-        Err(e) => {
-          listener_log!("watch_generic watcher context init failed: {e}");
-          return;
-        }
-      };
+      })
+      .map_err(|e| Error::from_reason(format!("Failed to spawn clipboard listener: {e}")))?;
 
-      // 添加处理器并获取关闭通道
-      let shutdown = watcher.add_handler(handler).get_shutdown_channel();
-      listener_log!("watch_generic handler added");
-
-      // 将 shutdown 发送给主线程
-      match shutdown_tx.send(shutdown) {
-        Ok(_) => listener_log!("watch_generic shutdown channel sent to main thread"),
-        Err(e) => {
-          listener_log!("watch_generic failed to send shutdown channel: {e}");
-          return;
-        }
-      }
-
-      // 启动监听
-      listener_log!("watch_generic watcher started");
-      watcher.start_watch();
-      listener_log!("watch_generic watcher loop exited");
-    });
-
-    // 接收 shutdown 并保存
-    if let Ok(shutdown) = shutdown_rx.recv() {
-      self.listener_type = Some(ListenerType::ClipboardRs(shutdown));
-      listener_log!("watch_generic setup completed");
-    } else {
-      listener_log!("watch_generic failed to receive shutdown channel from worker");
-    }
-
+    let shutdown = startup_rx
+      .recv()
+      .map_err(|e| Error::from_reason(format!("Clipboard listener startup interrupted: {e}")))??;
+    self.listener_type = Some(ListenerType::ClipboardRs(shutdown));
     Ok(())
   }
 
   /// 停止监听剪贴板变化
   #[napi]
   pub fn stop(&mut self) -> Result<()> {
+    self.running.store(false, Ordering::Release);
     if let Some(listener_type) = self.listener_type.take() {
       match listener_type {
         ListenerType::ClipboardRs(shutdown) => {
@@ -1430,11 +1359,9 @@ impl ClipboardListener {
           shutdown.stop();
         }
         #[cfg(target_os = "linux")]
-        ListenerType::Wayland(stop_tx) => {
+        ListenerType::Wayland(cancel) => {
           listener_log!("stop called for wayland listener");
-          if let Err(e) = stop_tx.send(()) {
-            listener_log!("failed to send wayland stop signal: {e}");
-          }
+          cancel.cancel();
         }
       }
     } else {
@@ -1446,7 +1373,7 @@ impl ClipboardListener {
   /// 检查是否正在监听
   #[napi]
   pub fn is_watching(&self) -> bool {
-    self.listener_type.is_some()
+    self.running.load(Ordering::Acquire)
   }
 
   /// 获取当前使用的监听器类型
@@ -1457,5 +1384,19 @@ impl ClipboardListener {
     } else {
       "generic".to_string()
     }
+  }
+}
+
+struct ListenerState(Arc<AtomicBool>);
+
+impl Drop for ListenerState {
+  fn drop(&mut self) {
+    self.0.store(false, Ordering::Release);
+  }
+}
+
+impl Drop for ClipboardListener {
+  fn drop(&mut self) {
+    let _ = self.stop();
   }
 }

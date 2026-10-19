@@ -1,27 +1,29 @@
 
 [package]
-authors = ["LongYinan <lynweklm@gmail.com>"]
-edition = "2021"
-name    = "clipboard"
-version = "0.1.0"
+authors      = ["LongYinan <lynweklm@gmail.com>"]
+edition      = "2021"
+name         = "clipboard"
+publish      = false
+rust-version = "1.88"
+version      = "0.1.0"
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-base64       = "0.22.1"
-clipboard-rs = "0.3.3"
-napi         = { version = "3.0.0", features = ["async"] }
-napi-derive  = "3.0.0"
-tokio        = { version = "1.0", features = ["rt", "rt-multi-thread"] }
+base64       = "0.23.1"
+clipboard-rs = "0.3.5"
+napi         = { version = "3.14.2", features = ["async"] }
+napi-derive  = "3.6.12"
+tokio        = { version = "1.53.3", features = ["rt", "rt-multi-thread"] }
+url          = "2.5.8"
 
-# 仅在 Linux 平台上引入 wayland-clipboard-listener
+# Wayland 读写和监听共用同一套协议实现。
 [target.'cfg(target_os = "linux")'.dependencies]
-wayland-clipboard-listener = "0.6.0"
-wl-clipboard-rs           = "0.9.3"
+wl-clipboard-rs = "0.9.4"
 
 [build-dependencies]
-napi-build = "2"
+napi-build = "2.6.0"
 
 [profile.release]
 lto   = true
